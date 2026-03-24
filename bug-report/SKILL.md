@@ -22,6 +22,136 @@ metadata:
 - User wants a standardized template for their team
 - User needs to classify severity/priority of a defect
 
+---
+## Input Schema
+**Trước khi viết bug report, agent PHẢI thu thập đủ thông tin sau. Nếu user mô tả tự do, hãy tự phân tích và điền vào template. Hỏi lại chỉ khi thiếu thông tin bắt buộc.**
+
+```yaml
+INPUT REQUIRED:
+  # --- Mandatory ---
+  observed_behavior:
+    description: "Điều gì đã xảy ra (thực tế)"
+    format: "Mô tả cụ thể, dùng đúng text từ UI/log nếu có"
+    bad_example: "Button không hoạt động"
+    good_example: "Submit button trên trang /checkout không phản hồi khi click, không có loading state, không có error message. Console log: TypeError: Cannot read property 'id' of undefined"
+
+  expected_behavior:
+    description: "Hành vi mong đợi (should happen)"
+    note: "Mô tả đúng đắn theo spec/requirement, không chỉ nói 'should work'"
+    example: "Click Submit nên gửi POST /api/orders, hiện loading spinner, và redirect sang /orders/success"
+
+  steps_to_reproduce:
+    description: "Các bước tái tạo lỗi"
+    format: "Numbered steps, mỗi step là 1 action, bắt đầu từ clean state"
+    example: |
+      1. Open incognito browser
+      2. Go to https://app.com/login
+      3. Login with user@example.com / password123
+      4. Navigate to /cart, add 2 items
+      5. Click 'Proceed to Checkout'
+      6. Fill card: 4111111111111111, 12/27, CVV 123
+      7. Click 'Submit Order'
+      8. Observe: button becomes unresponsive
+
+  # --- Strongly Recommended ---
+  environment:
+    description: "Môi trường xảy ra lỗi"
+    fields:
+      app_version: "v2.3.1 hoặc commit SHA abc1234"
+      environment: "Production / Staging / Dev"
+      os: "macOS 14.3 / Windows 11 / Ubuntu 22.04"
+      browser: "Chrome 123 / Firefox 124 / Safari 17"
+      device: "Desktop / iPhone 15 Pro / Samsung Galaxy S24"
+      user_role: "Admin / Free user / Guest / [specific role]"
+
+  severity_hint:
+    description: "Gợi ý mức độ nghiệm trọng (agent sẽ xác nhận lại)"
+    options: ["Critical — system down", "High — major feature broken", "Medium — partial impact", "Low — cosmetic"]
+    note: "Nếu không biết, agent sẽ tự phân loại dựa trên impact"
+
+  # --- Optional ---
+  frequency:
+    description: "Tần suất xảy ra"
+    options: ["Always (100%)", "Often (>50%)", "Sometimes (~25%)", "Rarely (<10%)", "Once"]
+
+  evidence:
+    description: "Bằng chứng kèm theo"
+    types: ["screenshot", "video/loom", "console errors", "network request/response", "server logs"]
+    note: "Paste text evidence trực tiếp nếu có; mô tả những gì cần attach"
+
+  target_platform:
+    description: "Platform để format bug report"
+    options: ["standard (default)", "jira", "github", "linear"]
+    default: "standard"
+```
+
+> Nếu user paste mô tả tự do ("button không hoạt động"), hãy tự phân tích thông tin và tạo report draft. Sau đó nêu rõ những trường còn thiếu để hỏi user một lần duy nhất.
+
+---
+## Output Contract
+**Agent PHẢI xuất ra ĐẦY ĐỦ tất cả các section sau. KHÔNG được bỏ qua bất kỳ section nào.**
+
+### Section 1 — Formatted Bug Report
+Bug report hoàn chỉnh theo standard template (hoặc format của target platform):
+- Summary line (1 dòng, cụ thể: what broke + where + impact)
+- Environment (tất cả fields)
+- Steps to Reproduce (numbered, atomic, start từ clean state)
+- Expected vs Actual Behavior (sử dụng exact text từ UI/log)
+- Frequency
+- Evidence (moà tả rõ cần attach gì, paste text evidence nếu có)
+- Workaround (nếu có)
+- Root Cause Hypothesis (Section riêng ngày cuối)
+
+### Section 2 — Severity/Priority Classification
+Phân loại với giải thích:
+```
+Severity:  [Critical/High/Medium/Low]
+Rationale: [Tại sao chọn mức này — scope of impact, workaround availability]
+
+Priority:  [P1/P2/P3/P4]
+Rationale: [Business impact, user count affected, urgency]
+
+Affected users: [All / ~X% / specific role/segment]
+
+Severity vs Priority note:
+  [Giải thích nếu severity và priority khác nhau — ví dụ: S4 cosmetic nhưng P1 vì release ngày mai]
+```
+
+### Section 3 — Root Cause Hypothesis
+```
+Hypothesis: [Best guess về nguyên nhân kỹ thuật]
+Supporting evidence: [Tại sao nghĩ vậy — dựa trên console error, network response, behavior pattern]
+Suggested investigation path:
+  1. Check [location/file] for [suspected issue]
+  2. Verify [behavior] in [context]
+  3. Review [related change / recent deploy / config]
+```
+
+### Section 4 — Reproduction Confidence Score
+```
+Reproduction Confidence: [High / Medium / Low]
+
+Factors:
+  ✅/❌ Steps are atomic and start from clean state
+  ✅/❌ Environment is fully specified
+  ✅/❌ Frequency is clear ([Always/Sometimes/Rarely])
+  ✅/❌ At least one piece of evidence provided
+  ✅/❌ Steps were verified by reporter
+
+If Low confidence:
+  Additional info needed: [liệt kê những gì cần để tăng confidence]
+```
+
+### Section 5 — Suggested Fix Direction
+```
+Fix Suggestion (QA perspective):
+  Likely fix: [kỹ thuật cụ thể — ví dụ: "Add null check before accessing order.id"]
+  Code area: [file/module/service nghi ngờ]
+  Test to add after fix: [test case cần thêm để cover scenario này]
+  Regression risk: [Low/Medium/High — các areas có thể bị ảnh hưởng bởi fix]
+```
+
+---
 ## Workflow
 
 1. **Gather information** — ask user for: what happened, what was expected, how to reproduce

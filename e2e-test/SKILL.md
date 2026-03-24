@@ -22,6 +22,135 @@ metadata:
 - User needs to set up a browser testing framework from scratch
 - User wants to test responsive behavior or multi-browser compatibility
 
+---
+## Input Schema
+**Trước khi bắt đầu, agent PHẢI thu thập đủ thông tin sau. Nếu user cung cấp mô tả tự do, hãy phân tích và map vào các trường dưới đây trước khi tiến hành.**
+
+```yaml
+INPUT REQUIRED:
+  # --- Mandatory ---
+  user_flow:
+    description: "Các bước user thực hiện trong UI journey cần tự động hóa"
+    format: "Liệt kê từng bước: 1. Go to /login, 2. Fill email, 3. Click Submit..."
+    example: "1. Navigate to /checkout, 2. Fill card details, 3. Click Pay, 4. Verify success page"
+
+  framework:
+    description: "Framework E2E sẽ sử dụng"
+    options: ["playwright (default)", "cypress", "selenium"]
+    default: "playwright"
+
+  language:
+    description: "Ngôn ngữ lập trình"
+    options: ["typescript (default)", "javascript", "python (selenium only)"]
+    default: "typescript"
+
+  base_url:
+    description: "URL gốc của ứng dụng cần test"
+    example: "https://staging.myapp.com"
+
+  # --- Strongly Recommended ---
+  auth_required:
+    description: "Flow có yêu cầu đăng nhập không?"
+    options: ["yes", "no"]
+    if_yes: "Cung cấp: auth endpoint, test credentials hoặc cookie/token storage path"
+
+  selectors_available:
+    description: "Danh sách data-testid attributes hiện có trong UI"
+    example: "[email-input, password-input, submit-btn, error-message, dashboard-welcome]"
+    note: "Nếu không có, agent sẽ đề xuất selectors cần add vào code"
+
+  browser_targets:
+    description: "Trình duyệt cần test"
+    options: ["chromium (default)", "firefox", "webkit", "mobile-chrome", "mobile-safari"]
+    default: "chromium"
+
+  # --- Optional ---
+  existing_pages:
+    description: "Danh sách Page Object files đã có (tránh duplicate)"
+    example: "LoginPage.ts, DashboardPage.ts"
+
+  ci_platform:
+    description: "CI/CD platform để generate config"
+    options: ["github-actions (default)", "gitlab-ci", "circleci", "none"]
+    default: "github-actions"
+
+  api_intercept_needed:
+    description: "Có cần mock/intercept API responses không?"
+    options: ["yes", "no"]
+    default: "no"
+```
+
+> Nếu user chỉ paste mô tả flow tự do (ví dụ: "test login flow"), hãy tự phân tích và điền các trường trên trước khi sinh code. Hỏi lại ONLY khi thiếu `base_url` hoặc `user_flow`.
+
+---
+## Output Contract
+**Agent PHẢI xuất ra ĐẦY ĐỦ tất cả các section sau. KHÔNG được bỏ qua bất kỳ section nào.**
+
+### Section 1 — Flow Analysis
+Phân tích user flow thành bảng:
+| Step # | Action | Element (selector) | Expected State | Notes |
+|---|---|---|---|---|
+| 1 | Navigate to /login | — | Page loaded, form visible | — |
+| 2 | Fill email | `[data-testid="email-input"]` | Input populated | — |
+
+### Section 2 — Page Object Plan
+Danh sách các POM classes cần tạo:
+| Class Name | File Path | Responsibility | Extends |
+|---|---|---|---|
+| BasePage | pages/BasePage.ts | navigate, waitForLoad | — |
+| LoginPage | pages/LoginPage.ts | login, expectError | BasePage |
+
+### Section 3 — POM Files (Full Code)
+Code hoàn chỉnh cho từng Page Object class:
+- `pages/BasePage.ts` — abstract base class
+- `pages/[PageName].ts` — 1 file per page trong flow (ALL locators + ALL actions)
+
+### Section 4 — Test Spec File (Full Code)
+File test spec hoàn chỉnh bao gồm:
+- Happy path tests (tất cả steps thành công)
+- Error path tests (sai input, network fail, auth fail)
+- Edge cases (empty fields, special characters, concurrent actions)
+- `test.describe` + `test.beforeEach` + `test.afterEach` structure
+
+### Section 5 — Auth Fixture Setup
+Nếu `auth_required = yes`:
+- `tests/global.setup.ts` — login once, save storage state
+- `playwright.config.ts` update — projects with setup dependency
+- `playwright/.auth/` directory setup
+
+### Section 6 — CI Configuration
+File CI config hoàn chỉnh (GitHub Actions / GitLab CI / CircleCI):
+- Install deps, install browsers, run tests
+- Upload artifacts on failure
+- Parallel execution config
+- Environment variables setup
+
+### Section 7 — Coverage & Gap Report
+```
+E2E Coverage Summary
+====================
+User Flow: [flow name]
+Framework: [playwright/cypress]
+
+Covered:
+  ✅ Happy path — [steps]
+  ✅ Auth guard — [redirect behavior]
+  ✅ Form validation — [fields covered]
+  ✅ API failure handling — [if mocked]
+
+Not Covered (Add Later):
+  ⚠️  Mobile viewport (375px) — skipped per scope
+  ⚠️  Multi-browser: Firefox, WebKit — needs separate run config
+
+Flakiness Risks:
+  🔶 [step] — uses text selector, recommend adding data-testid
+  🔶 [step] — async operation, ensure waitForSelector is used
+
+Selectors Missing (Request from Dev):
+  📌 Add data-testid="[name]" to [element description]
+```
+
+---
 ## Framework Priority
 
 **Default: Playwright** (TypeScript) — best DX, multi-browser, built-in assertions, no flakiness.

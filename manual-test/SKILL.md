@@ -25,6 +25,118 @@ metadata:
 - User wants UAT (User Acceptance Testing) scripts
 - User needs to apply ISTQB test design techniques
 
+---
+
+## Input Schema
+
+**BEFORE generating any test cases, the agent MUST collect the following. Ask for missing fields.**
+
+```yaml
+INPUT REQUIRED:
+  # --- Mandatory ---
+  feature_or_story:       # User story / feature name / requirement title
+                          # e.g., "User Registration", "Checkout Flow"
+
+  test_basis:             # WHERE requirements come from — choose one or more:
+                          # user_story | acceptance_criteria | mockup/wireframe
+                          # | api_spec | business_rules | existing_feature_description
+
+  scope:                  # What to test. e.g., "Registration form validation"
+                          # What to EXCLUDE. e.g., "Email delivery (separate test)"
+
+  # --- Contextual ---
+  user_roles:             # Who uses this feature? e.g., [admin, regular_user, guest]
+                          # Default: assume single role if not specified
+
+  priority:               # P1 (critical) | P2 (high) | P3 (medium) | P4 (low)
+                          # Default: P2
+
+  test_type:              # functional | regression | smoke | uat | exploratory
+                          # Default: functional
+
+  technique_hint:         # Optional — force a technique:
+                          # ep | bva | decision_table | state_transition
+                          # | pairwise | exploratory | use_case | checklist
+                          # Default: agent auto-selects based on feature type
+
+  # --- Optional detail ---
+  input_fields:           # List of form fields / parameters, with constraints
+                          # e.g., [{name: "age", type: int, range: "18-65"}, ...]
+
+  states:                 # If stateful: list of states + transitions
+                          # e.g., [NEW, PENDING, CONFIRMED, SHIPPED, CANCELLED]
+
+  environment:            # staging | local | production
+                          # Default: staging
+
+  existing_test_cases:    # Paste any existing TCs to avoid duplication
+```
+
+**If user provides raw text (requirement/description):** extract fields from it and confirm before generating.
+
+---
+
+## Output Contract
+
+**The agent MUST produce ALL of the following sections. Never skip a section.**
+
+### Section 1 — Input Interpretation Summary
+```
+Feature:       [name]
+Test Basis:    [source]
+Technique(s):  [auto-selected or user-specified]
+Risk Level:    P1 / P2 / P3 / P4
+Scope:         [in-scope] | [out-of-scope]
+```
+
+### Section 2 — Test Case Table (minimum 1 row per scenario category)
+
+| TC-ID | Title | Technique | Priority | Type | Preconditions | Steps | Expected Result |
+|---|---|---|---|---|---|---|---|
+| [ID] | [title] | EP/BVA/DT/ST | P1–P4 | FN/REG/SMK | [conditions] | [numbered steps] | [exact expected] |
+
+**Mandatory categories — at least 1 TC per row:**
+| Category | Min TCs | Description |
+|---|---|---|
+| Happy Path | ≥ 1 | Valid, typical input — full success flow |
+| Invalid Input | ≥ 1 per field | Each required field missing or wrong format |
+| Boundary Values | ≥ 6 per range | min-1, min, min+1, max-1, max, max+1 |
+| Null / Empty | ≥ 1 | Empty string, null, zero for each key input |
+| Authorization | ≥ 1 | Unauthenticated + wrong role |
+| Error Recovery | ≥ 1 | System failure / dependency down, retry |
+| Negative Flow | ≥ 1 | Intentional misuse, duplicate, conflict |
+
+### Section 3 — Coverage Matrix
+```
+Total TCs generated:    [N]
+Happy path:             [N]
+Error/Invalid:          [N]
+Boundary:               [N]
+Security:               [N]
+Automation candidate:   [N] (marked with [AUTO])
+Manual-only:            [N]
+```
+
+### Section 4 — Gaps & Risks
+Explicitly list what is NOT covered and why:
+```
+Not Covered:
+  - [scenario]: [reason — out of scope | needs data | needs environment]
+
+Risks if not covered:
+  - [risk description]
+```
+
+### Section 5 — Exploratory Charter (if type=exploratory or gaps exist)
+```
+Charter: "Explore [area] to discover [risks] with focus on [concern]"
+Duration: [N] minutes
+Areas: [list]
+Questions: [list]
+```
+
+---
+
 ## Workflow
 
 1. **Identify test basis** — requirements, user stories, mockups, specs

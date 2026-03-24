@@ -27,6 +27,194 @@ metadata:
 - User wants to track QA metrics and reporting
 
 ---
+## Input Schema
+**Trước khi tạo test plan, agent PHẢI thu thập đủ thông tin sau. Nếu user cung cấp mô tả tự do, hãy tự phân tích và map vào schema, sau đó tạo draft plan. Hỏi lại chỉ khi thiếu thông tin cốt lõi.**
+
+```yaml
+INPUT REQUIRED:
+  # --- Mandatory ---
+  project_name:
+    description: "Tên project/sản phẩm"
+    example: "E-Commerce Platform v2.0 / User Auth Module / Sprint 14"
+
+  sprint_or_release:
+    description: "Sprint hoặc release đang làm test plan"
+    example: "Sprint 14 (Mar 20–Apr 3) / Release v2.3.0"
+
+  features_in_scope:
+    description: "Danh sách features/user stories cần test"
+    format: "Liệt kê từng feature + mô tả ngắn"
+    example:
+      - "USER-001: User registration with email verification"
+      - "USER-002: Login with 2FA (TOTP)"
+      - "PAYMENT-005: Stripe checkout integration"
+
+  # --- Strongly Recommended ---
+  features_out_of_scope:
+    description: "Những gì KHÔNG được test trong sprint này"
+    example:
+      - "Performance testing — separate plan"
+      - "Android native app — mobile team handles"
+    note: "Explicit out-of-scope giảm hiểu lầm và scope creep"
+
+  test_levels:
+    description: "Các tầng test cần thực hiện"
+    options: ["unit", "integration", "api", "e2e", "manual", "uat", "security", "performance"]
+    default: "[unit, integration, api, e2e, manual]"
+    multi_select: true
+
+  tech_stack:
+    description: "Công nghệ sử dụng (lựa chọn tools phù hợp)"
+    example: "React + Node.js + PostgreSQL / Python FastAPI + MongoDB"
+
+  team_size:
+    description: "Thông tin team QA"
+    fields:
+      qa_count: "Số QA engineers"
+      sdet_count: "Số SDETs (automation)"
+      manual_qa_count: "Số manual testers"
+
+  timeline:
+    description: "Thời gian testing"
+    fields:
+      start_date: "Ngày bắt đầu test"
+      end_date: "Ngày kết thúc (code freeze / release date)"
+      sprint_duration_days: "Số ngày của sprint, ví dụ: 14"
+
+  # --- Optional ---
+  risk_context:
+    description: "Các rủi ro đã biết cần đưa vào risk matrix"
+    example: "Payment integration lần đầu dùng Stripe, chưa test production before"
+
+  environments:
+    description: "Các môi trường testing sẵn có"
+    example: "staging.app.com (stable), perf.app.com (request 3 days in advance)"
+
+  defect_tool:
+    description: "Tool quản lý bug"
+    options: ["jira", "github-issues", "linear", "notion", "other"]
+    default: "jira"
+
+  automation_coverage_target:
+    description: "Mục tiêu automation coverage"
+    default: "70% of P1+P2 test cases"
+```
+
+> Nếu user nói "viết test plan cho sprint này" và cung cấp feature list, hãy tự tạo draft plan. Hỏi một lần duy nhất về những gì còn thiếu (timeline, team size).
+
+---
+## Output Contract
+**Agent PHẢI xuất ra ĐẦY ĐỦ tất cả các section sau. KHÔNG được bỏ qua bất kỳ section nào.**
+
+### Section 1 — Complete ISTQB Test Plan (IEEE 829 / ISO 29119)
+Test plan đầy đủ bao gồm tất cả sections sau:
+1. Introduction (purpose, background, audience)
+2. Scope (in-scope, out-of-scope, test levels table)
+3. Risk Analysis (product risks + project risks)
+4. Test Approach (strategy, design techniques table, regression strategy)
+5. Test Cases (TC matrix + coverage summary)
+6. Test Data Requirements (type, source, tool, notes)
+7. Test Environment (environments table + dependencies)
+8. Entry / Exit Criteria (entry, suspension, exit)
+9. Metrics & Reporting (progress metrics, quality metrics, daily report format)
+10. Effort Estimation (PERT table)
+11. Deliverables (table with owner + due date)
+12. Sign-off (table with roles)
+
+### Section 2 — Risk Matrix
+Bảng risk đầy đủ:
+| Risk ID | Description | Likelihood | Impact | Risk Level | Mitigation | Owner |
+|---|---|---|---|---|---|---|
+| R-001 | [dựa trên features + risk_context] | H/M/L | H/M/L | HIGH/MEDIUM/LOW | [action] | [team] |
+
+### Section 3 — Test Case Matrix
+TC Matrix đầy đủ cho tất cả features in scope:
+| TC-ID | Feature | Title | Level | Technique | Priority | Automated | Status |
+|---|---|---|---|---|---|---|---|
+| [PROJ]-[FEAT]-FN-001 | [feature] | [title] | Unit/API/E2E | EP/BVA/EP+BVA | P1/P2 | Yes/No | ⏽ |
+
+Format TC-ID: `[PROJECT_ABBR]-[FEATURE_ABBR]-[TEST_TYPE]-[NUMBER]`
+Ví dụ: `AUTH-REG-FN-001` = Auth module, Registration, Functional, #001
+
+### Section 4 — Entry/Exit Criteria (detailed)
+```
+ENTRY CRITERIA (khi nào bắt đầu test):
+  [ ] Feature code complete and merged to staging
+  [ ] Unit tests passing in CI
+  [ ] API docs updated
+  [ ] Test data seeded
+  [ ] Smoke test passing on staging
+
+SUSPENSION CRITERIA (khi nào dừng test):
+  • >20% test cases blocked by environment issues
+  • Critical blocker bug (S1) found with no workaround
+  • [specific criteria từ risk context]
+
+EXIT CRITERIA (khi nào done):
+  [ ] 100% P1 TCs executed + passed
+  [ ] 100% P2 TCs executed (exceptions documented)
+  [ ] 0 open Critical/High defects
+  [ ] Code coverage ≥80% for new code
+  [ ] Security baseline passed
+  [ ] Performance within 20% of baseline
+  [ ] QA Lead sign-off obtained
+```
+
+### Section 5 — PERT Effort Estimate
+Bảng ước tính effort cụ thể:
+| Activity | Optimistic | Most Likely | Pessimistic | PERT | Assignee |
+|---|---|---|---|---|---|
+| Test planning | Xh | Xh | Xh | Xh | QA Lead |
+| Writing automation | Xh | Xh | Xh | Xh | SDET |
+| Manual/exploratory | Xh | Xh | Xh | Xh | QA |
+| Bug reporting + retest | Xh | Xh | Xh | Xh | QA |
+| UAT facilitation | Xh | Xh | Xh | Xh | QA + PM |
+| **Total** | Xh | Xh | Xh | **Xh** | — |
+
+PERT formula: (O + 4M + P) / 6. Điền số thực tế dựa trên scope + team size.
+
+### Section 6 — Metrics Dashboard Template
+Template theo dõi mế triết kỳ:
+```
+📊 TEST METRICS DASHBOARD — [Sprint/Release]
+==========================================
+Week [N] | [date range]
+
+Execution Progress:
+  Planned:    [N] TCs
+  Run:        [N] ([X]%)
+  Pass:       [N] ([X]%)
+  Fail:       [N]
+  Blocked:    [N]
+
+Defect Status:
+  New this week: [N] (Critical: X, High: X, Medium: X)
+  Total open:    [N]
+  Closed:        [N]
+
+Automation:
+  Coverage:   [X]% (target: [X]%)
+  Pass rate:  [X]%
+
+🚦 Overall: ON TRACK / AT RISK / BLOCKED
+🔴 Blockers: [list or NONE]
+```
+
+### Section 7 — Sign-off Table
+```
+TEST PLAN SIGN-OFF
+==================
+| Role | Name | Date | Decision | Comments |
+|------|------|------|----------|----------|
+| QA Lead | [name] | [date] | ⏽ Pending | |
+| Dev Lead | [name] | [date] | ⏽ Pending | |
+| Product Manager | [name] | [date] | ⏽ Pending | |
+| Test Manager | [name] | [date] | ⏽ Pending | |
+
+Decision options: Approved ✅ / Approved with Comments 🟡 / Rejected ❌
+```
+
+---
 
 ## ISTQB Test Plan Hierarchy
 

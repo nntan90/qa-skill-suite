@@ -27,6 +27,154 @@ metadata:
 - User wants to identify flaky or brittle tests
 - User wants to audit test coverage for real quality (not just % numbers)
 
+---
+## Input Schema
+**Trước khi review, agent PHẢI thu thập đủ thông tin sau. Nếu user paste code trực tiếp, hãy tự phân tích language/framework từ code và bắt đầu review ngay.**
+
+```yaml
+INPUT REQUIRED:
+  # --- Mandatory ---
+  test_code:
+    description: "Test code cần review"
+    format: "Paste toàn bộ test file(s), hoặc GitHub URL của file"
+    note: "Có thể paste nhiều files — review tổng thể suite"
+
+  language:
+    description: "Ngôn ngữ lập trình"
+    options: ["python", "javascript", "typescript", "java", "go", "ruby", "csharp"]
+    note: "Tự phân tích từ code nếu không được cung cấp"
+
+  framework:
+    description: "Testing framework sử dụng"
+    options: ["pytest", "jest", "vitest", "mocha", "playwright", "cypress", "junit", "rspec"]
+    note: "Tự phân tích từ imports nếu không được cung cấp"
+
+  # --- Strongly Recommended ---
+  codebase_context:
+    description: "Mô tả ngắn về feature/module đang được test"
+    example: "Module xác thực user, bao gồm login, register, password reset. Dùng JWT."
+    note: "Giúp phát hiện missing test cases phù hợp với context"
+
+  # --- Optional ---
+  review_focus:
+    description: "Những gì cần ưu tiên review"
+    options:
+      - "anti-patterns only"
+      - "missing test cases only"
+      - "coverage quality"
+      - "flakiness / stability"
+      - "full review (default)"
+    default: "full review"
+
+  coverage_report:
+    description: "Kết quả coverage từ tool (nếu có)"
+    example: "Paste output của pytest-cov hoặc jest --coverage"
+    note: "Giúp phân biệt coverage thực vs coverage gaming"
+
+  pr_context:
+    description: "Link PR hoặc user story đang được implement"
+    note: "Dùng để kiểm tra acceptance criteria có được cover không"
+```
+
+> Nếu user paste code và nói "review tests", hãy tự detect language/framework và bắt đầu full review ngay. KHÔNG cần hỏi thêm trừ khi test code quá ngắn để hiểu context.
+
+---
+## Output Contract
+**Agent PHẢI xuất ra ĐẦY ĐỦ tất cả các section sau. KHÔNG được bỏ qua bất kỳ section nào.**
+
+### Section 1 — Anti-Pattern Scan Results
+Kiểm tra toàn bộ 10 anti-patterns (AP-01 đến AP-10). Với mỗi anti-pattern:
+```
+AP-01 The Liar:           [FOUND / NOT FOUND]
+  Location: [file:line nếu found]
+  Instance: [code snippet]
+
+AP-02 The Tautology:      [FOUND / NOT FOUND]
+AP-03 The Wet Floor:      [FOUND / NOT FOUND]
+AP-04 The Mockery:        [FOUND / NOT FOUND]
+AP-05 The Optimist:       [FOUND / NOT FOUND]
+AP-06 The Sleeper:        [FOUND / NOT FOUND]
+AP-07 The Narcissist:     [FOUND / NOT FOUND]
+AP-08 The Pollution:      [FOUND / NOT FOUND]
+AP-09 The Coward:         [FOUND / NOT FOUND]
+AP-10 Brittle Selector:   [FOUND / NOT FOUND (N/A nếu không phải E2E)]
+```
+
+### Section 2 — Coverage Quality Score
+Không chỉ dựa vào % code coverage — đánh giá coverage thực:
+```
+Coverage Quality Assessment
+===========================
+Total test cases:               [N]
+Tests with ≥2 meaningful asserts: [N] ([X]%)  Target: ≥85%
+Error paths covered:            [N]/[M] ([X]%)  Target: ≥80%
+Happy path only tests:          [N] (flag: Optimist risk)
+Tests with 0 assertions:        [N] (flag: Liar)
+
+Overall Coverage Quality: 🟢 Good / 🟡 Needs Work / 🔴 Poor
+```
+
+### Section 3 — Findings Table
+Bảng tổng hợp tất cả vấn đề phát hiện:
+| ID | Anti-Pattern | Location | Severity | Current Code | Fix Recommendation |
+|---|---|---|---|---|---|
+| F-001 | AP-01 Liar | auth.test.ts:45 | High | `test('login works', () => { login() })` | Add assertions on return value and side effects |
+| F-002 | AP-06 Sleeper | checkout.spec.ts:23 | Medium | `await sleep(3000)` | Replace with `waitForSelector('#success')` |
+
+### Section 4 — Missing Test Cases
+Các scenario quan trọng chưa có test:
+| Scenario | Test Type | Why Important | Priority |
+|---|---|---|---|
+| Login with expired JWT token | Unit + E2E | Auth bypass risk | P1 |
+| Password reset with already-used token | Integration | Security flaw | P1 |
+| Email with Unicode characters | Unit | Encoding bug risk | P2 |
+
+### Section 5 — Completion Gate Verdict
+Kết quả kiểm tra Definition of Done:
+```
+COMPLETION GATE — [feature/PR name]
+====================================
+Code:
+  [PASS/FAIL] All acceptance criteria have automated tests
+  [PASS/FAIL] No anti-patterns detected
+  [PASS/FAIL] Tests pass in CI
+  [PASS/FAIL] Tests pass in random order
+
+Coverage:
+  [PASS/FAIL] Line coverage ≥80% for new code
+  [PASS/FAIL] Error paths tested for all new endpoints
+  [PASS/FAIL] Boundary values tested
+
+Security:
+  [PASS/FAIL] No hardcoded secrets
+  [PASS/FAIL] Input validation tested
+  [PASS/FAIL] Auth checks tested
+
+Quality:
+  [PASS/FAIL] No Liar tests (AP-01)
+  [PASS/FAIL] No hard sleeps (AP-06)
+  [PASS/FAIL] No brittle selectors (AP-10)
+
+VERDICT: [DONE ✅ / NOT DONE ❌]
+Blocker items (must fix before merge): [list]
+```
+
+### Section 6 — Prioritized Remediation Plan
+Danh sách việc cần làm theo độ ưu tiên:
+```
+IMMEDIATE (before merge):
+  1. [F-ID] [action] — [file:line] — estimated: Xmin
+  2. [F-ID] [action] — [file:line] — estimated: Xmin
+
+THIS SPRINT:
+  3. Add missing test: [scenario] — estimated: Xh
+  4. [action]
+
+TECH DEBT (backlog):
+  5. [action] — low severity, can defer
+```
+
+---
 ## Workflow
 
 1. **Read existing tests** — understand what they claim to test

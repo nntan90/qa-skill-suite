@@ -22,6 +22,154 @@ metadata:
 - User wants to establish a performance baseline before a release
 - User needs to benchmark before/after optimization
 
+---
+## Input Schema
+**Trước khi viết bất kỳ script nào, agent PHẢI thu thập đủ thông tin sau. Nếu user cung cấp mô tả tự do, hãy tự map vào schema trước khi tiến hành.**
+
+```yaml
+INPUT REQUIRED:
+  # --- Mandatory ---
+  target_endpoints:
+    description: "Danh sách endpoints cần load test"
+    format: "METHOD /path - mô tả ngắn"
+    example:
+      - "POST /api/auth/login - Đăng nhập user"
+      - "GET /api/dashboard - Tải trang dashboard"
+      - "POST /api/orders - Tạo đơn hàng"
+
+  sla_targets:
+    description: "SLA targets cần đạt (HÓI nếu user chưa cung cấp)"
+    fields:
+      p95_ms: "95th percentile response time, ví dụ: 200ms"
+      p99_ms: "99th percentile response time, ví dụ: 500ms"
+      error_rate_pct: "Tỉ lệ lỗi tối đa, ví dụ: 1%"
+      min_rps: "Throughput tối thiểu (requests/sec), ví dụ: 500"
+    default_if_unknown: "p95<200ms, p99<500ms, error_rate<1%"
+
+  test_type:
+    description: "Loại test cần chạy"
+    options:
+      - "smoke (1-2 VUs, verify script works)"
+      - "load (expected peak traffic)"
+      - "stress (beyond peak, find degradation)"
+      - "spike (sudden burst)"
+      - "soak (long duration, memory leak detection)"
+      - "breakpoint (continuously increase until failure)"
+    default: "load"
+    multi_select: true
+
+  expected_load:
+    description: "Lưu lượng mong đợi"
+    fields:
+      peak_vus: "Số Virtual Users đỉnh, ví dụ: 200"
+      peak_rps: "Hoặc requests/second đỉnh, ví dụ: 500"
+      ramp_up_duration: "Thời gian ramp up, ví dụ: 2m"
+      hold_duration: "Thời gian giữ tải, ví dụ: 10m"
+
+  # --- Strongly Recommended ---
+  auth_type:
+    description: "Cách xác thực API"
+    options: ["bearer_token", "api_key", "basic_auth", "session_cookie", "none"]
+    if_bearer: "Cung cấp: login endpoint + test credentials cho load test user"
+
+  base_url:
+    description: "Base URL của service cần test"
+    example: "https://staging.api.com"
+
+  # --- Optional ---
+  framework:
+    description: "Framework load test"
+    options: ["k6 (default)", "locust", "jmeter"]
+    default: "k6"
+
+  environment_notes:
+    description: "Lưu ý về môi trường test"
+    example: "Staging có rate limit 100 RPS per IP, sử dụng VPN riêng"
+
+  output_format:
+    description: "Format output kết quả"
+    options: ["json", "csv", "stdout", "cloud (k6 cloud)"]
+    default: "stdout + json"
+```
+
+> Nếu user chỉ nói "load test API này", hãy hỏi `sla_targets` và `expected_load` trước khi viết script. Đây là 2 thông tin bắt buộc để tạo threshold hợp lệ.
+
+---
+## Output Contract
+**Agent PHẢI xuất ra ĐẦY ĐỦ tất cả các section sau. KHÔNG được bỏ qua bất kỳ section nào.**
+
+### Section 1 — SLA Definition
+Bảng SLA chính thức được xác nhận trước khi test:
+```
+Service: [service name]
+Environment: [staging/perf]
+Test Date: [date]
+
+SLA Targets:
+  p95 response time  < [X]ms
+  p99 response time  < [X]ms
+  Error rate         < [X]%
+  Throughput         >= [X] RPS
+  Max VUs            [X]
+```
+
+### Section 2 — Test Type Selection Rationale
+Giải thích tại sao chọn loại test này, cấu hình stages dự kiến, và mục tiêu cụ thể cần đạt.
+
+### Section 3 — Full k6/Locust Script
+Script hoàn chỉnh, chạy được ngay bao gồm:
+- Import statements + custom metrics
+- `options` block với stages và thresholds ứng với SLA
+- `setup()` function (health check + auth nếu cần)
+- `default function()` với tất cả endpoints + check assertions
+- `teardown()` nếu cần
+- ENV variable support (`__ENV.BASE_URL`, `__ENV.AUTH_TOKEN`)
+- Lệnh chạy kèm theo (ví dụ: `k6 run -e BASE_URL=... script.js`)
+
+### Section 4 — Threshold Configuration
+Giải thích từng threshold trong script:
+| Threshold | Value | SLA Mapping | Fail Action |
+|---|---|---|---|
+| `http_req_duration p(95)` | < 200ms | p95 SLA | Fail test |
+| `http_req_failed` | < 1% | Error rate SLA | Fail test |
+
+### Section 5 — Result Interpretation Guide
+Hướng dẫn đọc kết quả sau khi chạy:
+```
+CHECK LIST — Kết quả cần review:
+  ✅ http_req_duration p95 = ? ms (target: < [X]ms)
+  ✅ http_req_duration p99 = ? ms (target: < [X]ms)
+  ✅ http_req_failed rate = ?% (target: < [X]%)
+  ✅ http_reqs total = ? (throughput RPS)
+  ✅ vus_max = ? (peak concurrent users reached)
+
+RED FLAGS cần check:
+  🔴 P95 tăng dần theo thời gian (memory leak / connection pool exhaustion)
+  🔴 Error rate tăng đột ngột tại [X VUs] (saturation point)
+  🔴 Throughput giảm giữa test (GC pause, thread starvation)
+```
+
+### Section 6 — Pass/Fail Verdict Template
+```
+PERFORMANCE TEST RESULT — [date]
+================================
+Test Type:    [load/stress/spike/...]
+Duration:     [Xm]
+Peak VUs:     [X]
+
+RESULTS:
+  p95 response:  [X]ms   [PASS/FAIL] (target: <[X]ms)
+  p99 response:  [X]ms   [PASS/FAIL] (target: <[X]ms)
+  Error rate:    [X]%    [PASS/FAIL] (target: <[X]%)
+  Peak RPS:      [X]     [PASS/FAIL] (target: >=[X])
+
+OVERALL: [PASS ✅ / FAIL ❌]
+
+Notes:
+  [Ghi chú về bottleneck, khuyến nghị tối ưu, nếu FAIL]
+```
+
+---
 ## Framework Priority
 
 **Default: k6** (JavaScript) — modern, Git-friendly, excellent CLI output, cloud integration.

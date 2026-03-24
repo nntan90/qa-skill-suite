@@ -25,6 +25,167 @@ metadata:
 - User wants to review code for security flaws (SAST)
 - User is building an LLM-based product and needs AI security testing
 
+---
+## Input Schema
+**Trước khi bắt đầu security test, agent PHẢI thu thập đủ thông tin sau. Nếu user cung cấp mô tả tự do, hãy tự phân tích và map vào schema trước khi tiến hành.**
+
+```yaml
+INPUT REQUIRED:
+  # --- Mandatory ---
+  target:
+    description: "Mục tiêu cần security test"
+    options:
+      - "URL web application: https://staging.app.com"
+      - "API base URL: https://api.app.com"
+      - "Cờ source code (SAST): paste code hoặc mô tả module"
+      - "Cả API + webapp"
+
+  test_scope:
+    description: "Các OWASP categories cần test (multi-select)"
+    options:
+      - "A01 — Broken Access Control (IDOR, privilege escalation)"
+      - "A02 — Cryptographic Failures (data exposure, HTTPS, headers)"
+      - "A03 — Injection (SQL, XSS, NoSQL, Command, XXE)"
+      - "A04 — Insecure Design (logic flaws, missing controls)"
+      - "A05 — Security Misconfiguration (headers, errors, defaults)"
+      - "A06 — Vulnerable Components (npm audit, CVE)"
+      - "A07 — Auth Failures (brute force, session, password reset)"
+      - "A08 — Software Integrity Failures (supply chain)"
+      - "A09 — Logging Failures (sensitive data in logs)"
+      - "A10 — SSRF"
+      - "LLM — OWASP LLM Top 10 (nếu là AI product)"
+      - "Full — Tất cả categories trên"
+    default: "Full"
+
+  test_type:
+    description: "Loại test sẽ thực hiện"
+    options: ["manual (checklist + payloads)", "dast (ZAP/nuclei)", "sast (bandit/semgrep)", "combined"]
+    default: "combined"
+
+  # --- Strongly Recommended ---
+  auth_type:
+    description: "Cơ chế xác thực của ứng dụng"
+    options: ["jwt", "session_cookie", "api_key", "oauth2", "basic_auth", "none"]
+
+  user_roles:
+    description: "Các roles/permission levels trong hệ thống"
+    example: "[guest, user, admin, super_admin]"
+    note: "Cần để test IDOR và privilege escalation giữa các roles"
+
+  tech_stack:
+    description: "Công nghệ sử dụng (lựa chọn SAST tool phù hợp)"
+    example: "Node.js + PostgreSQL + React / Python + MongoDB + FastAPI"
+
+  # --- Optional ---
+  known_sensitive_endpoints:
+    description: "Endpoints chứa dữ liệu nhạy cảm cần ưu tiên test"
+    example: "/api/payments, /api/admin/*, /api/users/{id}/profile"
+
+  existing_security_controls:
+    description: "Controls đã có (CSRF token, rate limiting, WAF, etc.)"
+    note: "Giúp focus vào những gì chưa có"
+
+  compliance_requirement:
+    description: "Yêu cầu compliance cần đáp ứng"
+    options: ["PCI-DSS", "GDPR", "SOC2", "HIPAA", "ISO27001", "none"]
+```
+
+> Nếu user chỉ nói "security test this API", hãy tự điền scope = Full và hỏi: `user_roles` và `auth_type`. Không yêu cầu gì thêm nếu user muốn bắt đầu ngay.
+
+---
+## Output Contract
+**Agent PHẢI xuất ra ĐẦY ĐỦ tất cả các section sau. KHÔNG được bỏ qua bất kỳ section nào.**
+
+### Section 1 — Threat Model Summary
+Phân tích mối đe dọa:
+```
+Target: [URL/codebase]
+Scope: [OWASP categories selected]
+User Roles: [guest, user, admin...]
+High-Value Assets: [dữ liệu nhạy cảm, tài nguyên cần bảo vệ]
+
+Attack Vectors:
+  [Mô tả các vector tấn công phù hợp với tech stack và scope]
+
+Priority Areas:
+  P1: [OWASP category] — [lý do]
+  P2: [OWASP category] — [lý do]
+```
+
+### Section 2 — Test Cases Per OWASP Category
+Với mỗi OWASP category trong scope, xuất bảng:
+| Test ID | OWASP | Test Description | Payload/Method | Expected Result |
+|---|---|---|---|---|
+| SEC-AUTH-001 | A07 | Brute force on login | 10+ wrong attempts | Lockout or CAPTCHA |
+| SEC-INJ-001 | A03 | SQL injection in email | `' OR 1=1--` | No data leak, 400/sanitized |
+
+### Section 3 — Vulnerability Report (Per Finding)
+Với mỗi lỗ hổng phát hiện, xuất đầy đủ report:
+```markdown
+## VUL-[ID]: [Title]
+Severity: Critical/High/Medium/Low
+CVSS: [score]
+OWASP: [category]
+Status: Open
+
+Description: [what it is and why dangerous]
+Steps to Reproduce: [exact steps]
+Payload Used: [exact payload]
+Actual Result: [what happened]
+Impact: [what attacker could do]
+Recommendation: [specific fix]
+References: OWASP [link], CWE-[ID]
+```
+
+### Section 4 — CVSS Score + Remediation Priority
+Bảng ưu tiên xử lý:
+| VUL-ID | Title | CVSS | Severity | Fix Priority | Remediation Effort |
+|---|---|---|---|---|---|
+| VUL-001 | SQL Injection in /search | 9.1 | Critical | P1 — Fix immediately | Medium |
+| VUL-002 | Missing CSRF token | 6.5 | Medium | P2 — Fix this sprint | Low |
+
+### Section 5 — Security Checklist Result
+Kết quả đánh dấu cho tất cả mục trong pre-release checklist:
+```
+[PASS/FAIL/N.A.] Brute force protection on login
+[PASS/FAIL/N.A.] CSRF token on state-changing requests
+[PASS/FAIL/N.A.] IDOR tested for all resource types
+[PASS/FAIL/N.A.] Security headers: HSTS, CSP, X-Frame-Options
+[PASS/FAIL/N.A.] SQL injection tested on all input fields
+[PASS/FAIL/N.A.] XSS (stored + reflected) tested
+[PASS/FAIL/N.A.] Error responses do not leak internals
+[PASS/FAIL/N.A.] Rate limiting on auth + sensitive endpoints
+[PASS/FAIL/N.A.] Session properly invalidated on logout
+[PASS/FAIL/N.A.] All endpoints require authentication
+```
+
+### Section 6 — Risk Summary & Go/No-Go
+```
+SECURITY TEST SUMMARY
+=====================
+Target: [target]
+Date: [date]
+Tester: AI Security Agent
+
+Findings:
+  Critical: [N]   → MUST fix before release
+  High:     [N]   → MUST fix before release
+  Medium:   [N]   → Fix within 1 sprint
+  Low:      [N]   → Fix when possible
+  Info:     [N]   → Awareness only
+
+GO/NO-GO VERDICT:
+  🔴 NO-GO — [N] Critical/High issues open
+  🟡 AT RISK — [N] Medium issues, release with sign-off
+  🟢 GO — No Critical/High issues, ready to release
+
+Top 3 Recommendations:
+  1. [action item]
+  2. [action item]
+  3. [action item]
+```
+
+---
 ## Workflow
 
 1. **Define scope** — in-scope URLs, endpoints, user roles

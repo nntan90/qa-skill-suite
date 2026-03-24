@@ -25,6 +25,125 @@ metadata:
 - User needs integration tests between modules or services
 - User wants mutation testing or anti-pattern detection on existing tests
 
+---
+
+## Input Schema
+
+**BEFORE writing tests, the agent MUST collect ALL mandatory fields. Ask for missing ones.**
+
+```yaml
+INPUT REQUIRED:
+  # --- Mandatory ---
+  code:                   # The function / class / module to test.
+                          # Paste the actual source code. If TDD: paste the interface/signature.
+
+  language:               # python | javascript | typescript | java | go | csharp | ruby | kotlin
+                          # If omitted: detect from code syntax.
+
+  # --- Strongly Recommended ---
+  framework:              # pytest | jest | vitest | junit5 | xunit | rspec | go_test | mocha
+                          # If omitted: agent selects best fit for language.
+
+  dependencies:           # What external dependencies exist? List them:
+                          # e.g., [database, http_client, email_service, file_system, redis]
+                          # Used to determine what to mock.
+
+  context:                # Brief description of what the code does and why.
+                          # e.g., "Calculates shipping cost based on weight and destination"
+
+  # --- Optional ---
+  test_mode:              # unit | integration | both
+                          # Default: unit
+
+  existing_tests:         # Paste existing test code to detect gaps / anti-patterns.
+
+  coverage_target:        # Minimum coverage to achieve. Default: 80%
+
+  special_cases:          # Known edge cases to cover, e.g.:
+                          # ["empty cart", "negative quantity", "international address"]
+
+  style:                  # aaa (Arrange/Act/Assert) | bdd (Given/When/Then)
+                          # Default: aaa
+```
+
+**If user pastes code without context:** read the code, infer intent, state assumptions before writing tests.
+
+---
+
+## Output Contract
+
+**The agent MUST produce ALL sections below. No section is optional.**
+
+### Section 1 — Analysis Summary
+```
+Unit Under Test:    [function/class name]
+Language:           [language + version if detectable]
+Framework:          [test framework]
+Dependencies:       [list of deps to mock]
+Test Mode:          unit | integration | both
+Complexity:         [low/medium/high] — determines how many tests to generate
+```
+
+### Section 2 — Test Plan (before code)
+List every test case BEFORE writing code. Agent must not skip this.
+
+| # | Test Name | Category | Technique | Mocks Needed |
+|---|---|---|---|---|
+| 1 | test_[method]_[state]_[expected] | happy / error / boundary | EP/BVA/error | [dep1, dep2] |
+
+**Mandatory coverage grid — agent must generate test for each row:**
+| Category | Min Tests | What to Cover |
+|---|---|---|
+| Happy Path | ≥ 2 | Typical valid input(s) |
+| BVA — Boundary | ≥ 4 | min, min-1, max, max+1 for each range |
+| EP — Null/Empty | ≥ 1 | None / null / "" / 0 / [] |
+| EP — Wrong Type | ≥ 1 | String where int expected, etc. |
+| Error Path | ≥ 1 per dep | Each mocked dependency throws exception |
+| Error Path | ≥ 1 | Each mocked dependency returns bad data |
+| State Transition | ≥ 1 per transition | If stateful object |
+
+### Section 3 — Test File (complete, runnable)
+```[language]
+# Full file with:
+# - All imports (real paths)
+# - All fixtures / setup
+# - All test functions following plan above
+# - Comments explaining non-obvious logic
+# - EVERY test has ≥ 2 assertions
+```
+
+### Section 4 — Test Summary Table
+| Test Name | Covers | Technique | Status |
+|---|---|---|---|
+| test_[name] | [what behavior] | EP/BVA/mock | ✅ Generated |
+
+### Section 5 — Coverage Gap Report
+```
+Generated:  [N] tests
+Estimated line coverage:   ~[N]%
+Estimated branch coverage: ~[N]%
+
+NOT covered (explain each):
+  - [branch/scenario]: [reason]
+
+Recommendation:
+  - [what to add next]
+```
+
+### Section 6 — Anti-Pattern Check
+After writing, self-review each test:
+```
+[ ] No test has 0 assertions (AP-01 Liar)
+[ ] No test asserts a constant or a mock return value (AP-02 Tautology)
+[ ] No test depends on another test's state (AP-03 Wet Floor)
+[ ] No test only calls mock.assert_called() without testing logic (AP-04 Mockery)
+[ ] Error paths tested (not just happy path) (AP-05 Optimist)
+[ ] No time.sleep() or setTimeout() (AP-06 Sleeper)
+[ ] Tests pass if run in random order
+```
+
+---
+
 ## Workflow
 
 1. **Detect stack** — language, test framework, assertion library, mock library

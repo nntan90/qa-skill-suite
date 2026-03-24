@@ -25,6 +25,133 @@ metadata:
 - User wants database-level testing
 - User wants to test mobile backend APIs
 
+---
+
+## Input Schema
+
+**Collect ALL mandatory fields before generating tests. Ask if not provided.**
+
+```yaml
+INPUT REQUIRED:
+  # --- Mandatory ---
+  endpoint:               # HTTP method + path. e.g., "POST /api/users"
+                          # Multiple endpoints: list all
+
+  # --- Strongly Recommended ---
+  request_spec:           # Describe the request:
+                          # headers: [Authorization: Bearer, Content-Type: application/json]
+                          # body fields: [{name, type, required, constraints}]
+                          # path params: [{name, type}]
+                          # query params: [{name, type, optional}]
+
+  response_spec:          # Expected response(s):
+                          # success: {status: 201, body_fields: [id, name, email, createdAt]}
+                          # errors:  [{status: 422, when: "email missing"}, ...]
+
+  auth_type:              # none | bearer_token | api_key | session_cookie | oauth2 | basic
+                          # Default: bearer_token
+
+  language:               # python | typescript | javascript | java | go | csharp
+                          # Default: detect from context or python
+
+  # --- Optional ---
+  base_url:               # e.g., http://localhost:8000
+                          # Default: http://localhost:8000
+
+  user_roles:             # Roles to test RBAC with. e.g., [admin, user, guest]
+
+  schema_definition:      # OpenAPI spec snippet OR JSON schema for response validation
+
+  test_db:                # true | false — also verify DB state after mutations
+                          # Default: false
+
+  existing_tests:         # Paste existing test code to detect gaps
+
+  special_scenarios:      # e.g., ["concurrent requests", "large payload", "unicode in name"]
+```
+
+---
+
+## Output Contract
+
+**ALL sections are mandatory. Never produce partial output.**
+
+### Section 1 — Endpoint Analysis
+```
+Endpoint:         [METHOD /path]
+Auth:             [auth type]
+Request body:     [fields with types + required flag]
+Response (2xx):   [status + body shape]
+Response (errors): [list of error codes + conditions]
+Roles to test:    [list]
+Schema provided:  yes | no (agent will infer if no)
+```
+
+### Section 2 — Test Matrix
+One row per test case. Agent must cover ALL status codes.
+
+| TC-ID | Method + Path | Scenario | Expected Status | Assertion Focus |
+|---|---|---|---|---|
+| API-[MOD]-[TYPE]-001 | POST /api/users | Valid payload | 201 | id present, schema valid |
+
+**Mandatory status code coverage — generate test for EACH applicable code:**
+| Code | Condition | Required? |
+|---|---|---|
+| 200/201 | Valid input, success | ✅ Always |
+| 400 | Malformed request body | ✅ Always |
+| 422 | Each required field missing | ✅ One per field |
+| 422 | Wrong field type | ✅ One per typed field |
+| 401 | No auth token | ✅ If auth required |
+| 401 | Invalid/expired token | ✅ If auth required |
+| 403 | Wrong role (RBAC) | ✅ If roles defined |
+| 403 | IDOR (access other user's data) | ✅ If resource-scoped |
+| 404 | Non-existent ID | ✅ If ID in path |
+| 409 | Duplicate resource | ✅ If unique constraint |
+| 429 | Rate limit exceeded | ⚠️ If rate limiting exists |
+| 500 | Upstream failure (mocked) | ✅ Always |
+
+### Section 3 — Test File (complete, runnable)
+```[language]
+# Full test file including:
+# - imports + base config
+# - auth fixture
+# - ALL test cases from matrix above
+# - schema definition for response validation
+# - cleanup (delete test data in afterAll/teardown)
+# - comments on IDOR + security cases
+```
+
+### Section 4 — Response Schema Definition
+```json
+// JSON Schema for each response type
+// Validates: field presence, types, formats, enum values
+// additionalProperties: false (no undocumented fields)
+```
+
+### Section 5 — Field-Level Assertion Checklist
+For each response field:
+```
+[ ] id:        present, type string/uuid, not null
+[ ] name:      present, type string, length >= 1
+[ ] email:     present, matches email regex
+[ ] createdAt: present, ISO 8601 datetime format
+[ ] password:  ABSENT (must not be in response)
+[ ] [field]:   [assertion]
+```
+
+### Section 6 — Test Coverage Summary
+```
+Endpoints covered:      [N]
+Total tests:            [N]
+Happy path:             [N]
+Error/validation:       [N]
+Security (IDOR/auth):   [N]
+DB-level verified:      [N] (if test_db=true)
+Gaps:                   [list any uncovered scenarios + reason]
+```
+
+---
+
 ## Workflow
 
 1. **Map the API** — method, URL, auth, request body, expected responses
