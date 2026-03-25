@@ -11,7 +11,7 @@ description: >
   "security scan", "threat model", "LLM security", "AI security".
 metadata:
   author: qa-skill-suite
-  version: '3.0'
+  version: '4.0'
 ---
 
 # Security Test Skill
@@ -529,6 +529,378 @@ API:
 [ ] Error messages don't leak stack traces or internals
 [ ] No mass assignment vulnerabilities
 [ ] Authentication required on all non-public endpoints
+```
+
+---
+
+## Advanced Testing Patterns
+
+### Pattern 1: Threat Modeling — STRIDE Framework
+
+Before writing a single security test, do a threat model. It tells you WHERE to focus. Without it, you test random things and miss the real risks.
+
+**STRIDE — 6 threat categories:**
+```
+Threat          | Violates      | Example                              | Test to write
+----------------|---------------|--------------------------------------|----------------------------------
+Spoofing        | Authentication| Attacker uses another user's session | Test session token validity
+Tampering       | Integrity     | Attacker modifies an order amount    | Test that fields can't be changed in transit
+Repudiation     | Non-repudiation| User denies placing an order        | Test that audit logs are written
+Info Disclosure | Confidentiality| Password in API response            | Test API response never has password
+Denial of Service| Availability | Attacker sends 10,000 login requests | Test rate limiting works
+Elevation of Privilege| Authorization| Regular user accesses admin page  | Test role-based access control
+```
+
+**How to run a STRIDE threat model:**
+
+Step 1 — Draw a data flow diagram:
+```
+[Browser] → [Login API] → [Auth Service] → [User DB]
+               ↓
+          [JWT Token]
+               ↓
+[Browser] → [Orders API] → [Order DB]
+               ↓
+          [Payment Service (external)]
+```
+
+Step 2 — For each arrow (data flow) and box (process), ask all 6 STRIDE questions:
+```
+LOGIN API:
+  S — Can someone spoof a valid user? → Test: brute force, token replay
+  T — Can someone tamper with the request? → Test: parameter tampering
+  R — Can the user deny their actions? → Test: audit log is written
+  I — Does the response leak sensitive data? → Test: no password in response
+  D — Can someone block the login? → Test: rate limiting, lockout
+  E — Can someone get higher privileges from login? → Test: role escalation
+```
+
+Step 3 — Convert each threat to a test case:
+```python
+# Threat: Spoofing — can attacker replay an old token?
+def test_expired_token_is_rejected():
+    old_token = create_token_with_expiry(minutes_ago=60)
+    response = requests.get("/api/user/profile",
+        headers={"Authorization": f"Bearer {old_token}"})
+    assert response.status_code == 401
+    assert response.json()["error"] == "token_expired"
+
+# Threat: Info Disclosure — does any endpoint leak passwords?
+def test_no_password_in_any_api_response():
+    sensitive_fields = ["password", "password_hash", "secret", "api_key", "private_key"]
+    endpoints = ["/api/users/1", "/api/profile", "/api/auth/me"]
+    
+    for endpoint in endpoints:
+        response = requests.get(endpoint, headers=auth_headers())
+        body = str(response.json()).lower()
+        for field in sensitive_fields:
+            assert field not in body, f"{field} found in {endpoint} response!"
+```
+
+---
+
+### Pattern 2: SAST / DAST / IAST — Where Each Tool Fits
+
+Different security testing methods work at different stages of the SDLC. Use ALL of them, not just one.
+
+**Decision table:**
+```
+Method | When it runs     | What it finds                | Tool examples
+-------|------------------|------------------------------|---------------------------
+SAST   | During dev/CI    | Insecure code, hardcoded keys| Bandit (Python), Semgrep, SonarQube
+DAST   | Against running  | Runtime flaws, config errors | OWASP ZAP, Burp Suite
+app    |                  |                              |
+IAST   | During QA tests  | Code + runtime combined      | Contrast Security, Seeker
+RASP   | In production    | Blocks real attacks          | (not a testing tool — protection)
+```
+
+**SAST — integrate into CI pipeline:**
+```yaml
+# .github/workflows/security.yml
+name: Security Scan
+on: [push, pull_request]
+
+jobs:
+  sast:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      # Python SAST with Bandit
+      - name: Run Bandit (Python SAST)
+        run: |
+          pip install bandit
+          bandit -r src/ -f json -o bandit-report.json
+          # fail on HIGH severity
+          bandit -r src/ --severity-level high
+
+      # Multi-language SAST with Semgrep
+      - name: Run Semgrep
+        uses: semgrep/semgrep-action@v1
+        with:
+          config: >-
+            p/owasp-top-ten
+            p/sql-injection
+            p/secrets
+            p/jwt
+
+      # Secret scanning
+      - name: Scan for secrets
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: main
+```
+
+**DAST — automated OWASP ZAP scan:**
+```bash
+# Run ZAP against your staging environment
+docker run -t owasp/zap2docker-stable zap-baseline.py \
+  -t https://staging.yourapp.com \
+  -r zap-report.html \
+  -l WARN   # fail on WARN level and above
+
+# Full active scan (more thorough, takes longer, do in CI not on production)
+docker run -t owasp/zap2docker-stable zap-full-scan.py \
+  -t https://staging.yourapp.com \
+  -r zap-full-report.html
+```
+
+**Manual DAST — what to test by hand:**
+```
+1. Open Burp Suite → intercept proxy → browse your app
+2. Intercept every request and try:
+   a. Change parameter values (IDs, amounts, roles)
+   b. Add/remove auth header
+   c. Change request method (GET → POST, DELETE → GET)
+   d. Inject payloads in every input field
+3. Record findings as test cases
+```
+
+---
+
+### Pattern 3: Injection Attack Test Patterns
+
+SQL injection, XSS, and command injection are in the OWASP Top 10 every year. Here are exact test patterns with payloads.
+
+**SQL Injection — test patterns:**
+```python
+SQL_INJECTION_PAYLOADS = [
+    "' OR '1'='1",           # basic auth bypass
+    "' OR '1'='1'--",        # comment out rest of query
+    "'; DROP TABLE users;--", # destructive injection
+    "' UNION SELECT 1,2,3--", # data extraction
+    "1' AND SLEEP(5)--",      # time-based blind injection
+    "' AND 1=CONVERT(int,(SELECT TOP 1 table_name FROM information_schema.tables))--",
+]
+
+class TestSQLInjection:
+    def test_login_rejects_sql_injection_in_email(self):
+        for payload in SQL_INJECTION_PAYLOADS:
+            response = requests.post("/api/auth/login", json={
+                "email": payload,
+                "password": "anything"
+            })
+            # Must not return 200 (would mean auth bypassed)
+            assert response.status_code != 200, \
+                f"SQL injection succeeded with payload: {payload}"
+            # Must not return 500 (would mean SQL error exposed)
+            assert response.status_code != 500, \
+                f"SQL error exposed for payload: {payload}"
+    
+    def test_search_endpoint_rejects_sql_injection(self):
+        for payload in SQL_INJECTION_PAYLOADS:
+            response = requests.get("/api/products",
+                params={"q": payload},
+                headers=auth_headers()
+            )
+            assert response.status_code in [200, 400], \
+                f"Unexpected status {response.status_code} for payload: {payload}"
+            if response.status_code == 200:
+                body = response.json()
+                # Should return empty or normal results, not database dump
+                assert len(str(body)) < 10000, "Suspiciously large response — possible data dump"
+```
+
+**XSS — Cross-Site Scripting test patterns:**
+```python
+XSS_PAYLOADS = [
+    "<script>alert('XSS')</script>",
+    "<img src=x onerror=alert('XSS')>",
+    "javascript:alert('XSS')",
+    "';alert('XSS')//",
+    "<svg onload=alert('XSS')>",
+    "\" onmouseover=\"alert('XSS')",
+    "<iframe src=\"javascript:alert('XSS')\">",
+]
+
+def test_user_profile_name_does_not_reflect_xss():
+    """Stored XSS: set a malicious name, then check if it's stored raw."""
+    for payload in XSS_PAYLOADS:
+        # Set the malicious value
+        update_response = requests.patch("/api/user/profile",
+            json={"display_name": payload},
+            headers=auth_headers()
+        )
+        
+        # Read it back
+        get_response = requests.get("/api/user/profile", headers=auth_headers())
+        stored_name = get_response.json().get("display_name", "")
+        
+        # The stored value must be HTML-escaped, not raw script
+        assert "<script>" not in stored_name, f"XSS stored raw: {payload}"
+        assert "onerror=" not in stored_name, f"XSS event handler stored: {payload}"
+        # Acceptable: "&lt;script&gt;" (HTML-encoded) or "" (stripped)
+
+def test_search_parameter_does_not_reflect_xss():
+    """Reflected XSS: malicious search term reflected back in response."""
+    for payload in XSS_PAYLOADS:
+        response = requests.get("/api/products",
+            params={"q": payload},
+            headers=auth_headers()
+        )
+        body = response.text
+        # Raw script tags must NOT appear in response
+        assert "<script>" not in body.lower()
+        assert "onerror=" not in body.lower()
+```
+
+**Command Injection — test patterns:**
+```python
+COMMAND_INJECTION_PAYLOADS = [
+    "; ls -la",
+    "| cat /etc/passwd",
+    "`whoami`",
+    "$(cat /etc/hosts)",
+    "; sleep 5",   # time-based: if response takes 5s, injection succeeded
+]
+
+def test_file_upload_name_does_not_allow_command_injection():
+    """File names should be sanitized — no command injection via filename."""
+    for payload in COMMAND_INJECTION_PAYLOADS:
+        filename = f"image{payload}.jpg"
+        response = requests.post("/api/files/upload",
+            files={"file": (filename, b"fake_image_data", "image/jpeg")},
+            headers=auth_headers()
+        )
+        # Should reject or sanitize — not execute the command
+        assert response.status_code in [200, 400, 422]
+        if response.status_code == 200:
+            saved_name = response.json().get("filename", "")
+            # Shell operators must not be in saved filename
+            for char in [";", "|", "`", "$", "("]:
+                assert char not in saved_name
+```
+
+---
+
+### Pattern 4: Authentication & Session Security
+
+Weak authentication is in OWASP Top 10 (A07). These patterns test the most common auth flaws.
+
+**Brute force protection:**
+```python
+def test_login_rate_limiting_after_5_attempts():
+    """After 5 wrong attempts, account must be locked or rate limited."""
+    for attempt in range(5):
+        requests.post("/api/auth/login", json={
+            "email": "victim@example.com",
+            "password": f"wrong_password_{attempt}"
+        })
+    
+    # 6th attempt — should be blocked
+    response = requests.post("/api/auth/login", json={
+        "email": "victim@example.com",
+        "password": "wrong_password_final"
+    })
+    assert response.status_code in [429, 423]
+    # 429 = Too Many Requests, 423 = Locked
+    if response.status_code == 429:
+        assert "retry_after" in response.headers or "Retry-After" in response.headers
+
+def test_correct_credentials_still_work_after_wrong_attempts():
+    """Lockout must not prevent correct login after reset/wait."""
+    # After lockout clears, correct password must still work
+    # Implementation note: this may require waiting for lockout expiry
+    pass  # fill in based on your lockout expiry time
+```
+
+**JWT security:**
+```python
+import jwt
+import base64
+
+def test_jwt_cannot_be_used_with_none_algorithm():
+    """CRITICAL: JWT with 'alg: none' must be rejected."""
+    # Craft a token with algorithm = none (classic bypass)
+    header = base64.b64encode(b'{"alg":"none","typ":"JWT"}').decode()
+    payload = base64.b64encode(b'{"user_id":1,"role":"admin"}').decode()
+    malicious_token = f"{header}.{payload}."
+    
+    response = requests.get("/api/user/profile",
+        headers={"Authorization": f"Bearer {malicious_token}"})
+    
+    assert response.status_code == 401, "JWT 'none' algorithm bypass succeeded — CRITICAL vulnerability!"
+
+def test_jwt_from_different_secret_is_rejected():
+    """Token signed with wrong secret must be rejected."""
+    fake_token = jwt.encode(
+        {"user_id": 1, "role": "admin"},
+        "wrong_secret_key",
+        algorithm="HS256"
+    )
+    response = requests.get("/api/user/profile",
+        headers={"Authorization": f"Bearer {fake_token}"})
+    
+    assert response.status_code == 401
+
+def test_expired_jwt_is_rejected():
+    """Expired token must be rejected even if signature is valid."""
+    import time
+    expired_token = jwt.encode(
+        {"user_id": 1, "exp": int(time.time()) - 3600},  # 1 hour ago
+        "real_secret_key",
+        algorithm="HS256"
+    )
+    response = requests.get("/api/user/profile",
+        headers={"Authorization": f"Bearer {expired_token}"})
+    
+    assert response.status_code == 401
+    assert "expired" in response.json().get("error", "").lower()
+```
+
+**Security headers check:**
+```python
+REQUIRED_SECURITY_HEADERS = {
+    "Content-Security-Policy":   "must be present",
+    "X-Content-Type-Options":    "nosniff",
+    "X-Frame-Options":           "DENY or SAMEORIGIN",
+    "Strict-Transport-Security": "must contain max-age",
+    "Referrer-Policy":           "must be present",
+}
+
+FORBIDDEN_HEADERS = [
+    "X-Powered-By",       # reveals tech stack
+    "Server",             # reveals server version (or should be generic)
+    "X-AspNet-Version",
+]
+
+def test_security_headers_present_on_all_responses():
+    endpoints = ["/", "/api/products", "/api/user/profile"]
+    for endpoint in endpoints:
+        response = requests.get(BASE_URL + endpoint)
+        headers = {k.lower(): v for k, v in response.headers.items()}
+        
+        assert "content-security-policy" in headers, f"CSP missing on {endpoint}"
+        assert "x-content-type-options" in headers, f"X-Content-Type-Options missing on {endpoint}"
+        assert headers.get("x-content-type-options", "").lower() == "nosniff"
+        
+        for forbidden in FORBIDDEN_HEADERS:
+            if forbidden.lower() in headers:
+                val = headers[forbidden.lower()]
+                # Acceptable if generic (e.g., "Server: nginx" without version)
+                assert not any(c.isdigit() for c in val), \
+                    f"Version info exposed in {forbidden} header: {val}"
 ```
 
 ---

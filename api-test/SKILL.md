@@ -11,7 +11,7 @@ description: >
   "database test", "DB test", "RestAssured", "test service", "integration test API".
 metadata:
   author: qa-skill-suite
-  version: '3.0'
+  version: '4.0'
 ---
 
 # API Test Skill
@@ -554,6 +554,423 @@ Security:
 [ ] XSS payload in string fields does not execute
 [ ] SQL injection attempt rejected
 [ ] Rate limiting active on sensitive endpoints
+```
+
+---
+
+## Advanced Testing Patterns
+
+### Pattern 1: Consumer-Driven Contract Testing (CDCT)
+
+Traditional API testing checks one side. Contract testing checks that the consumer AND provider BOTH agree on the API shape.
+
+**The problem it solves:**
+```
+Without contract testing:
+  - Frontend team tests their mock → passes
+  - Backend team tests their code → passes
+  - Both deploy → production breaks because the mock was wrong
+
+With contract testing:
+  - Consumer writes: "I expect POST /login to return {token: string}"
+  - Provider proves: "I do return {token: string}"
+  - Mismatch caught BEFORE deployment
+```
+
+**Pact — Python consumer test:**
+```python
+from pact import Consumer, Provider, Like, Term
+import requests
+
+pact = Consumer('Frontend').has_pact_with(Provider('AuthAPI'), pact_dir='./pacts')
+
+def test_login_contract():
+    expected_body = {
+        "token": Like("eyJhbGciOiJIUzI1NiJ9..."),  # any string
+        "expires_at": Term(r'\d{4}-\d{2}-\d{2}', "2026-12-31"),  # date format
+        "user": {
+            "id": Like(42),         # any integer
+            "email": Like("user@example.com"),  # any string
+            "role": Term(r'user|admin', "user")  # must be user or admin
+        }
+    }
+    
+    (pact
+     .given("valid credentials exist for user@example.com")
+     .upon_receiving("a login request with valid credentials")
+     .with_request(
+         method="POST",
+         path="/api/auth/login",
+         headers={"Content-Type": "application/json"},
+         body={"email": "user@example.com", "password": "correct_password"}
+     )
+     .will_respond_with(
+         status=200,
+         headers={"Content-Type": "application/json"},
+         body=expected_body
+     ))
+    
+    with pact:
+        response = requests.post(
+            pact.uri + "/api/auth/login",
+            json={"email": "user@example.com", "password": "correct_password"}
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert "token" in body
+        assert body["user"]["role"] in ["user", "admin"]
+```
+
+**Key Pact matchers to know:**
+```python
+Like("value")           # Any value of the same type (string, int, etc.)
+EachLike({"id": 1})     # Array where each element matches the template
+Term(r'regex', "example")  # Value matching a regex pattern
+```
+
+---
+
+### Pattern 2: OpenAPI / Schema Contract Validation
+
+Every API endpoint should be validated against its OpenAPI (Swagger) spec. This catches when code drifts from documentation.
+
+**Python — schemathesis for automatic OpenAPI testing:**
+```python
+import schemathesis
+
+# Load your OpenAPI spec and auto-generate tests
+schema = schemathesis.from_path("openapi.yaml")
+
+@schema.parametrize()
+def test_api_conforms_to_spec(case):
+    """Auto-generates test cases for every endpoint in the spec."""
+    response = case.call()
+    case.validate_response(response)  # response must match schema definition
+
+# Stateful testing — schemathesis chains related API calls
+@schema.parametrize()
+@settings(max_examples=100)
+def test_api_stateful(case):
+    """Tests multi-step flows: create user → get user → delete user."""
+    response = case.call_and_validate()
+    assert response.status_code not in [500]  # no server errors ever
+```
+
+**Manual JSON Schema validation (pytest + jsonschema):**
+```python
+import pytest
+import jsonschema
+import requests
+
+# Define schema once, reuse across tests
+USER_SCHEMA = {
+    "type": "object",
+    "required": ["id", "email", "created_at"],
+    "properties": {
+        "id":         {"type": "integer", "minimum": 1},
+        "email":      {"type": "string", "format": "email"},
+        "role":       {"type": "string", "enum": ["user", "admin", "guest"]},
+        "created_at": {"type": "string", "format": "date-time"},
+        "password":   {"not": {}}  # MUST NOT exist in response
+    },
+    "additionalProperties": False  # no extra fields allowed
+}
+
+def test_get_user_response_schema():
+    response = requests.get("/api/users/1", headers=auth_headers())
+    assert response.status_code == 200
+    
+    body = response.json()
+    # Validate against schema — raises ValidationError if wrong
+    jsonschema.validate(body, USER_SCHEMA)
+    
+    # Extra business rule checks
+    assert "@" in body["email"]
+    assert "password" not in body  # password must NEVER appear in API response
+
+def test_list_users_pagination_schema():
+    response = requests.get("/api/users?page=1&limit=10", headers=auth_headers())
+    body = response.json()
+    
+    list_schema = {
+        "type": "object",
+        "required": ["data", "total", "page", "limit"],
+        "properties": {
+            "data":  {"type": "array", "items": USER_SCHEMA},
+            "total": {"type": "integer", "minimum": 0},
+            "page":  {"type": "integer", "minimum": 1},
+            "limit": {"type": "integer", "minimum": 1, "maximum": 100}
+        }
+    }
+    jsonschema.validate(body, list_schema)
+    assert len(body["data"]) <= body["limit"]
+```
+
+---
+
+### Pattern 3: API Chaos & Fault Injection Testing
+
+Real systems fail. Chaos testing checks what happens when dependencies go down, responses are slow, or data is corrupted.
+
+**What to inject and what to verify:**
+```
+Fault Type             | What to Inject              | Expected System Behavior
+-----------------------|-----------------------------|----------------------------------
+Latency injection      | Delay response by 5-30s     | Timeout after configured limit, return 503
+Connection refused     | Kill the dependency service | Fallback to cache or default response
+Error response         | Return 500 from dependency  | Retry 3x, then fail gracefully
+Malformed response     | Return invalid JSON         | Handle parse error, return 500 with message
+Auth failure           | Return 401 from dependency  | Re-auth or return meaningful error to client
+Partial response       | Return incomplete payload   | Validate schema, handle missing fields
+Rate limiting          | Return 429                  | Back-off + retry or queue request
+```
+
+**Python — requests-mock for fault injection:**
+```python
+import pytest
+import requests
+import requests_mock as req_mock
+
+def test_api_handles_upstream_timeout():
+    """When payment service is slow, our API must timeout and return 503."""
+    with req_mock.Mocker() as m:
+        m.post(
+            "https://payment-service/charge",
+            exc=requests.exceptions.Timeout
+        )
+        
+        response = requests.post(
+            "/api/checkout",
+            json={"amount": 100, "card": "tok_visa"},
+            headers=auth_headers()
+        )
+        
+        assert response.status_code == 503
+        body = response.json()
+        assert body["error"] == "payment_service_unavailable"
+        assert "retry_after" in body  # must tell client when to retry
+
+def test_api_retries_on_500_then_succeeds():
+    """Service should retry failed dependency call up to 3 times."""
+    call_count = 0
+    
+    def response_generator(request, context):
+        nonlocal call_count
+        call_count += 1
+        if call_count < 3:
+            context.status_code = 500
+            return {"error": "internal"}
+        context.status_code = 200
+        return {"status": "charged", "transaction_id": "txn_123"}
+    
+    with req_mock.Mocker() as m:
+        m.post("https://payment-service/charge", json=response_generator)
+        
+        response = requests.post("/api/checkout", json={"amount": 50})
+        
+        assert response.status_code == 200  # eventually succeeded
+        assert call_count == 3              # retried exactly 3 times
+
+def test_api_handles_malformed_upstream_response():
+    """When upstream returns invalid JSON, API must handle it gracefully."""
+    with req_mock.Mocker() as m:
+        m.get("https://user-service/users/1", text="NOT_VALID_JSON!!!")
+        
+        response = requests.get("/api/profile/1", headers=auth_headers())
+        
+        assert response.status_code == 502  # Bad Gateway
+        assert response.json()["error"] == "invalid_upstream_response"
+```
+
+**k6 fault injection (performance + chaos combined):**
+```javascript
+import http from 'k6/http';
+import { check, sleep } from 'k6';
+
+// Simulate real-world failure: 5% of requests inject a bad auth token
+export let options = {
+  vus: 50,
+  duration: '2m',
+};
+
+export default function() {
+  const corruptToken = Math.random() < 0.05;  // 5% of users send bad token
+  
+  const headers = corruptToken
+    ? { 'Authorization': 'Bearer INVALID_TOKEN' }
+    : { 'Authorization': `Bearer ${__ENV.VALID_TOKEN}` };
+  
+  const res = http.get('https://api.example.com/orders', { headers });
+  
+  if (corruptToken) {
+    check(res, { 'invalid token → 401': (r) => r.status === 401 });
+  } else {
+    check(res, { 'valid token → 200': (r) => r.status === 200 });
+  }
+  
+  sleep(1);
+}
+```
+
+---
+
+### Pattern 4: GraphQL-Specific Testing
+
+GraphQL APIs need different test patterns than REST. The single endpoint and flexible queries create unique risks.
+
+**What to test in GraphQL:**
+```
+1. Schema Integrity       — Types, fields, nullability match expectations
+2. Query Testing          — Basic queries return correct data
+3. Mutation Testing       — Data mutations work and return correct shape
+4. Nested Query           — Deep nesting resolves correctly
+5. Error Format           — Errors appear in errors[] array (not HTTP 4xx)
+6. Introspection Security — Schema not exposed in production
+7. Query Complexity       — Deep/complex queries are rate-limited or rejected
+8. Authorization          — Field-level auth works (user can't read admin fields)
+```
+
+**Python — pytest + gql client:**
+```python
+import pytest
+from gql import gql, Client
+from gql.transport.requests import RequestsHTTPTransport
+
+@pytest.fixture
+def gql_client():
+    transport = RequestsHTTPTransport(
+        url="https://api.example.com/graphql",
+        headers={"Authorization": f"Bearer {TEST_TOKEN}"}
+    )
+    return Client(transport=transport, fetch_schema_from_transport=True)
+
+def test_get_user_query(gql_client):
+    query = gql("""
+        query GetUser($id: ID!) {
+            user(id: $id) {
+                id
+                name
+                email
+            }
+        }
+    """)
+    result = gql_client.execute(query, variable_values={"id": "1"})
+    assert result["user"]["id"] == "1"
+    assert "password" not in result["user"]  # security: password must not appear
+
+def test_graphql_error_format_on_invalid_query(gql_client):
+    """GraphQL errors must be in errors[] array, HTTP status stays 200."""
+    query = gql("""
+        query { user(id: "999999") { id nonExistentField } }
+    """)
+    # GQL errors come back in result["errors"], not as HTTP 4xx
+    import requests
+    response = requests.post(
+        "https://api.example.com/graphql",
+        json={"query": "{ user(id: 999999) { nonExistentField } }"},
+        headers={"Authorization": f"Bearer {TEST_TOKEN}"}
+    )
+    assert response.status_code == 200  # GraphQL always returns 200
+    body = response.json()
+    assert "errors" in body
+    assert body["errors"][0]["message"]  # must have a message
+
+def test_introspection_disabled_in_production():
+    """Schema introspection must be OFF in production — security risk."""
+    import requests
+    response = requests.post(
+        "https://api.example.com/graphql",
+        json={"query": "{ __schema { types { name } } }"}
+    )
+    body = response.json()
+    # In production, introspection should be blocked
+    assert "errors" in body or body.get("data", {}).get("__schema") is None
+
+def test_query_depth_limit(gql_client):
+    """Deeply nested queries must be rejected to prevent DoS."""
+    deep_query = """
+        { user { friends { friends { friends { friends { id name } } } } } }
+    """
+    import requests
+    response = requests.post(
+        "https://api.example.com/graphql",
+        json={"query": deep_query},
+        headers={"Authorization": f"Bearer {TEST_TOKEN}"}
+    )
+    body = response.json()
+    # Should be rejected with a query depth/complexity error
+    assert "errors" in body
+    assert any("depth" in str(e).lower() or "complex" in str(e).lower()
+               for e in body["errors"])
+```
+
+---
+
+### Pattern 5: IDOR & Authorization Testing (API Security)
+
+IDOR (Insecure Direct Object Reference) is one of the most common and serious API vulnerabilities. User A should never be able to access User B's data.
+
+**IDOR test pattern:**
+```python
+import pytest
+import requests
+
+class TestIDORPrevention:
+    """Every resource endpoint must prevent cross-user access."""
+    
+    @pytest.fixture(autouse=True)
+    def setup(self):
+        self.user_a = login("alice@example.com", "password123")
+        self.user_b = login("bob@example.com", "password456")
+        # User A creates a resource
+        self.order = create_order(self.user_a["token"], amount=100)
+        self.order_id = self.order["id"]
+    
+    def test_user_can_read_own_order(self):
+        """User A can read their own order."""
+        response = requests.get(
+            f"/api/orders/{self.order_id}",
+            headers={"Authorization": f"Bearer {self.user_a['token']}"}
+        )
+        assert response.status_code == 200
+    
+    def test_user_cannot_read_another_users_order(self):
+        """IDOR: User B must NOT be able to read User A's order."""
+        response = requests.get(
+            f"/api/orders/{self.order_id}",
+            headers={"Authorization": f"Bearer {self.user_b['token']}"}
+        )
+        assert response.status_code in [403, 404]
+        # 403 = access denied (preferred — honest)
+        # 404 = hide that resource exists (also acceptable for security)
+    
+    def test_user_cannot_update_another_users_order(self):
+        """IDOR: User B must NOT be able to modify User A's order."""
+        response = requests.patch(
+            f"/api/orders/{self.order_id}",
+            json={"status": "cancelled"},
+            headers={"Authorization": f"Bearer {self.user_b['token']}"}
+        )
+        assert response.status_code in [403, 404]
+    
+    def test_sequential_id_enumeration_is_blocked(self):
+        """Sequential IDs make IDOR easy. Test that guessing adjacent IDs fails."""
+        for delta in [-1, -2, +1, +2]:
+            guessed_id = self.order_id + delta
+            response = requests.get(
+                f"/api/orders/{guessed_id}",
+                headers={"Authorization": f"Bearer {self.user_b['token']}"}
+            )
+            # Should not be able to enumerate other users' orders
+            if response.status_code == 200:
+                body = response.json()
+                assert body.get("user_id") == self.user_b["id"], \
+                    f"IDOR vulnerability: user_b accessed order {guessed_id} belonging to another user"
+    
+    def test_unauthenticated_access_is_blocked(self):
+        """No token = no access. Always."""
+        response = requests.get(f"/api/orders/{self.order_id}")
+        assert response.status_code == 401
 ```
 
 ---

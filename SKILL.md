@@ -12,7 +12,7 @@ description: >
   "smoke test", "test plan", "test strategy", "exploratory", "ISTQB", "SDET", "automation".
 metadata:
   author: qa-skill-suite
-  version: '3.0'
+  version: '4.0'
 ---
 
 # QA / Software Testing Skill Suite

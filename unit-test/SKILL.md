@@ -11,7 +11,7 @@ description: >
   "component test", "SDET", "pytest", "Jest", "JUnit".
 metadata:
   author: qa-skill-suite
-  version: '3.0'
+  version: '4.0'
 ---
 
 # Unit Test Skill
@@ -506,6 +506,401 @@ Before saying "tests are done", verify:
 [ ] Tests run in < 100ms each (mock all I/O)
 [ ] Tests pass in random order
 [ ] Error paths covered for all external calls
+```
+
+---
+
+## Advanced Testing Patterns
+
+### Pattern 1: Test Doubles — The Full Taxonomy (Martin Fowler)
+
+Test doubles replace real dependencies during testing. There are 5 types. Use the RIGHT one — over-mocking is a common mistake.
+
+| Type | What it does | When to use | Risk if overused |
+|---|---|---|---|
+| Dummy | Passed around but never used | Required params that don't affect the test | None — very safe |
+| Stub | Returns a fixed value | Control what a dependency returns | Test can pass even if real code breaks |
+| Spy | Records calls + optionally delegates to real | Verify HOW many times / with what args | Couples test to implementation detail |
+| Mock | Pre-programmed with expectations, verified at end | Verify interaction protocol strictly | Brittle — breaks on any refactor |
+| Fake | Simplified real implementation (e.g., in-memory DB) | Integration-like test without real infra | Must stay in sync with real implementation |
+
+**Decision rule:**
+```
+Need to control what a dep returns?          → Stub
+Need to verify how a dep was called?         → Spy (check after) or Mock (check during)
+Need realistic but fast alternative?         → Fake
+Just need to satisfy a required parameter?   → Dummy
+```
+
+**Python (pytest) examples:**
+```python
+from unittest.mock import MagicMock, patch, call
+
+# STUB — control what the dependency returns
+def test_get_user_returns_username():
+    user_repo = MagicMock()
+    user_repo.find_by_id.return_value = {"id": 1, "name": "Alice"}
+    service = UserService(user_repo)
+    result = service.get_display_name(1)
+    assert result == "Alice"
+
+# SPY — record calls, check after
+def test_email_sent_once_on_registration():
+    email_sender = MagicMock()
+    service = RegistrationService(email_sender)
+    service.register("alice@example.com", "password123")
+    email_sender.send.assert_called_once()  # verify it was called exactly once
+    args = email_sender.send.call_args
+    assert args[0][0] == "alice@example.com"  # verify correct email address
+
+# MOCK — strict expectation, verified automatically
+def test_audit_log_records_user_action():
+    audit_log = MagicMock()
+    audit_log.record.expect_call("USER_LOGIN", user_id=42)  # set expectation
+    service = AuthService(audit_log)
+    service.login(user_id=42)
+    audit_log.record.assert_called_with("USER_LOGIN", user_id=42)
+
+# FAKE — in-memory implementation
+class InMemoryUserRepo:
+    def __init__(self):
+        self._store = {}
+    def save(self, user):
+        self._store[user["id"]] = user
+    def find_by_id(self, user_id):
+        return self._store.get(user_id)
+
+def test_user_saved_and_retrieved():
+    repo = InMemoryUserRepo()
+    repo.save({"id": 1, "name": "Bob"})
+    result = repo.find_by_id(1)
+    assert result["name"] == "Bob"
+```
+
+**TypeScript (Jest) examples:**
+```typescript
+// STUB
+const mockRepo = { findById: jest.fn().mockResolvedValue({ id: 1, name: 'Alice' }) };
+const service = new UserService(mockRepo as any);
+const name = await service.getDisplayName(1);
+expect(name).toBe('Alice');
+
+// SPY
+const emailSpy = jest.spyOn(emailService, 'send');
+await registrationService.register('alice@example.com', 'password123');
+expect(emailSpy).toHaveBeenCalledTimes(1);
+expect(emailSpy).toHaveBeenCalledWith('alice@example.com', expect.any(String));
+
+// FAKE — in-memory repository
+class InMemoryUserRepository implements UserRepository {
+  private store = new Map<number, User>();
+  async save(user: User): Promise<void> { this.store.set(user.id, user); }
+  async findById(id: number): Promise<User | null> { return this.store.get(id) ?? null; }
+}
+```
+
+---
+
+### Pattern 2: TDD — Red / Green / Refactor Cycle
+
+TDD means you write the test BEFORE the code. This forces you to think about the interface first.
+
+**The 3-step cycle:**
+```
+RED    → Write a failing test. The code does not exist yet. Test must fail.
+GREEN  → Write the MINIMUM code to make the test pass. No extras.
+REFACTOR → Clean up the code. Tests must still pass after refactor.
+```
+
+**Why it matters:** I've seen teams skip TDD and end up with code that's hard to test later. If your code is hard to test, it's usually badly designed. Tests are a design tool.
+
+**Example — building a password validator step by step:**
+
+Step 1 — RED: Write failing test first
+```python
+# test_password_validator.py
+def test_password_too_short_is_rejected():
+    result = validate_password("abc")        # function does not exist yet
+    assert result.is_valid == False
+    assert "8 characters" in result.error    # test fails — ImportError
+
+def test_password_minimum_8_chars_is_accepted():
+    result = validate_password("abcd1234")
+    assert result.is_valid == True
+
+def test_password_must_contain_number():
+    result = validate_password("abcdefgh")   # 8 chars but no number
+    assert result.is_valid == False
+    assert "number" in result.error
+```
+
+Step 2 — GREEN: Minimum code to pass
+```python
+# password_validator.py
+from dataclasses import dataclass
+
+@dataclass
+class ValidationResult:
+    is_valid: bool
+    error: str = ""
+
+def validate_password(password: str) -> ValidationResult:
+    if len(password) < 8:
+        return ValidationResult(False, "Password must be at least 8 characters")
+    if not any(c.isdigit() for c in password):
+        return ValidationResult(False, "Password must contain at least one number")
+    return ValidationResult(True)
+```
+
+Step 3 — REFACTOR: Improve without breaking tests
+```python
+def validate_password(password: str) -> ValidationResult:
+    errors = []
+    if len(password) < 8:
+        errors.append("at least 8 characters")
+    if not any(c.isdigit() for c in password):
+        errors.append("at least one number")
+    if not any(c.isupper() for c in password):
+        errors.append("at least one uppercase letter")
+    if errors:
+        return ValidationResult(False, f"Password must contain: {', '.join(errors)}")
+    return ValidationResult(True)
+```
+
+**TDD anti-patterns to avoid:**
+| Anti-pattern | Problem | Fix |
+|---|---|---|
+| Writing tests AFTER code | Tests just verify what code already does, not what it SHOULD do | Commit to test-first on new functions |
+| Skipping the RED step | If test passes before code is written, test is wrong | Always run the test first and confirm it fails |
+| Writing too much code in GREEN | Adds untested code | Write only what makes the test pass |
+| Not refactoring | Technical debt grows | Always do step 3 |
+
+---
+
+### Pattern 3: Property-Based Testing (PBT)
+
+Instead of testing specific values, you define PROPERTIES that must always be true. The framework generates hundreds of random inputs automatically.
+
+**When to use:** Functions with mathematical properties, data transformations, serialization/deserialization, any function where "for all inputs of type X, property Y must hold."
+
+**Python — Hypothesis framework:**
+```python
+from hypothesis import given, strategies as st
+import pytest
+
+# EXAMPLE-BASED (traditional) — only tests 3 cases
+def test_add_numbers_traditional():
+    assert add(1, 2) == 3
+    assert add(-1, 1) == 0
+    assert add(0, 0) == 0
+
+# PROPERTY-BASED — tests hundreds of cases automatically
+@given(st.integers(), st.integers())
+def test_add_is_commutative(a, b):
+    """Addition must be commutative: a+b == b+a. Always."""
+    assert add(a, b) == add(b, a)
+
+@given(st.integers())
+def test_add_zero_identity(n):
+    """Adding zero must not change the value. Always."""
+    assert add(n, 0) == n
+
+@given(st.text(min_size=1), st.text(min_size=1))
+def test_string_concat_length(s1, s2):
+    """Concatenated string length must equal sum of both lengths. Always."""
+    result = concat(s1, s2)
+    assert len(result) == len(s1) + len(s2)
+
+@given(st.lists(st.integers(), min_size=1))
+def test_sort_is_idempotent(lst):
+    """Sorting twice should give the same result as sorting once."""
+    once = sorted(lst)
+    twice = sorted(sorted(lst))
+    assert once == twice
+
+# Serialization round-trip property
+@given(st.dictionaries(st.text(), st.integers()))
+def test_json_roundtrip(data):
+    """Serialize → deserialize must return the original data. Always."""
+    import json
+    assert json.loads(json.dumps(data)) == data
+```
+
+**TypeScript — fast-check framework:**
+```typescript
+import * as fc from 'fast-check';
+
+// Property: reversing twice returns original
+test('reverse is its own inverse', () => {
+  fc.assert(
+    fc.property(fc.array(fc.integer()), (arr) => {
+      expect(reverse(reverse(arr))).toEqual(arr);
+    })
+  );
+});
+
+// Property: sorted array has no out-of-order elements
+test('sort produces ordered array', () => {
+  fc.assert(
+    fc.property(fc.array(fc.integer()), (arr) => {
+      const sorted = mySort(arr);
+      for (let i = 0; i < sorted.length - 1; i++) {
+        expect(sorted[i]).toBeLessThanOrEqual(sorted[i + 1]);
+      }
+    })
+  );
+});
+```
+
+**Common property patterns:**
+```
+Commutativity:   f(a, b) == f(b, a)         → addition, union
+Associativity:   f(f(a,b),c) == f(a,f(b,c)) → addition, string concat
+Identity:        f(a, identity) == a         → add 0, multiply 1
+Idempotency:     f(f(a)) == f(a)             → sort, deduplicate, normalize
+Round-trip:      decode(encode(a)) == a      → serialization
+Invariant:       size(f(a)) == size(a)       → map, transform
+Monotonicity:    a <= b → f(a) <= f(b)       → any monotone function
+```
+
+---
+
+### Pattern 4: Mutation Testing
+
+Mutation testing checks if your tests can catch real bugs. It injects small bugs into your code ("mutants") and checks if any test fails. If tests pass with a mutant → your tests are too weak.
+
+**How it works:**
+```
+1. Original code runs → all tests pass (baseline)
+2. Tool creates "mutants" — small code changes:
+   - Change > to >=
+   - Change + to -
+   - Delete a return statement
+   - Change True to False
+3. Run tests against each mutant
+4. If a test FAILS → mutant is "killed" (good — test caught the bug)
+5. If all tests PASS → mutant "survived" (bad — tests missed a real bug)
+
+Mutation Score = (Killed Mutants / Total Mutants) × 100%
+Target: > 80% mutation score
+```
+
+**Python — mutmut:**
+```bash
+# Install
+pip install mutmut
+
+# Run mutation testing
+mutmut run --paths-to-mutate=src/
+
+# View results
+mutmut results
+mutmut show 5   # show what mutant #5 looks like
+
+# Example output:
+# 🎉 12 out of 15 mutants killed (80%)
+# Surviving mutants (these are your test gaps):
+#   - Line 23: changed > to >= (your tests didn't catch it!)
+```
+
+**JavaScript — Stryker:**
+```bash
+# Install
+npm install --save-dev @stryker-mutator/core @stryker-mutator/jest-runner
+
+# stryker.config.json
+{
+  "testRunner": "jest",
+  "mutate": ["src/**/*.js"],
+  "reporters": ["html", "progress"]
+}
+
+# Run
+npx stryker run
+
+# Output shows mutation score per file
+```
+
+**What to do with surviving mutants:**
+```
+Surviving mutant: changed `if (age > 18)` to `if (age >= 18)`
+→ Your test never tested age = 18 exactly
+→ Add: assert validate_age(18) == True (boundary value)
+
+Surviving mutant: deleted `return False` at end of function
+→ Your test never checked the False return case
+→ Add a test for the rejection path
+```
+
+---
+
+### Pattern 5: Contract Testing (Consumer-Driven, Pact)
+
+In microservices, service A depends on service B's API. Contract testing checks that both sides agree on the interface — without needing both services running at the same time.
+
+**The two roles:**
+- **Consumer** — the service that calls the API (writes the contract)
+- **Provider** — the service that responds (verifies the contract)
+
+**How Pact works:**
+```
+1. Consumer writes a test that says:
+   "When I call POST /users with {name: Alice}, I expect 201 with {id: number}"
+2. Pact generates a contract file (pact.json) from that test
+3. Provider runs the contract file against its own code
+4. If provider code returns what the contract says → PASS
+5. If not → FAIL — breaking change detected before deployment
+```
+
+**Consumer test (Python):**
+```python
+import pytest
+from pact import Consumer, Provider
+
+pact = Consumer('UserService').has_pact_with(Provider('AuthService'))
+
+def test_get_user_contract():
+    # Define what we expect the provider to do
+    (pact
+     .given("user with id 1 exists")
+     .upon_receiving("a request for user 1")
+     .with_request("GET", "/users/1")
+     .will_respond_with(
+         200,
+         body={"id": 1, "name": "Alice", "email": Like("alice@example.com")}
+     ))
+    
+    with pact:
+        result = user_client.get_user(1)  # calls the mock provider
+        assert result["name"] == "Alice"
+    # Pact saves the contract to pacts/userservice-authservice.json
+```
+
+**Provider verification (Python):**
+```python
+from pact import Verifier
+
+def test_provider_honors_contract():
+    verifier = Verifier(provider="AuthService", provider_base_url="http://localhost:8080")
+    output, _ = verifier.verify_with_broker(
+        broker_url="https://pact-broker.company.com",
+        provider_states_setup_url="http://localhost:8080/pact/provider-states",
+    )
+    assert output == 0  # 0 = all contracts passed
+```
+
+**When to use contract testing vs integration testing:**
+```
+Integration test:   Both services must be running. Slow. Brittle. Hard to set up.
+Contract test:      Each service tests independently. Fast. Catches breaking changes early.
+
+Use contract testing when:
+- You have microservices or separate frontend/backend teams
+- You want to catch API breaking changes BEFORE they reach staging
+- You deploy services independently
+
+Do NOT replace integration tests — contract tests check interface agreement,
+not business logic correctness.
 ```
 
 ---

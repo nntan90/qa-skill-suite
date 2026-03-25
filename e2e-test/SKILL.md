@@ -9,7 +9,7 @@ description: >
   "end-to-end", "test the login flow", "automate this journey", "smoke test", "regression test".
 metadata:
   author: qa-skill-builder
-  version: '3.0'
+  version: '4.0'
 ---
 
 # E2E Test Skill
@@ -505,6 +505,389 @@ jobs:
 [ ] Accessibility — interactive elements have accessible names
 [ ] Mobile viewport — test at 375px width (optional)
 [ ] No console errors during the test run
+```
+
+---
+
+## Advanced Testing Patterns
+
+### Pattern 1: Page Object Model (POM) — Full Implementation
+
+POM separates page structure (selectors, navigation) from test logic (assertions, scenarios). Without POM, when the UI changes, you update 50 tests. With POM, you update 1 file.
+
+**Structure:**
+```
+tests/
+├── pages/
+│   ├── LoginPage.ts          ← selectors + actions for login page
+│   ├── DashboardPage.ts      ← selectors + actions for dashboard
+│   └── CheckoutPage.ts       ← selectors + actions for checkout
+├── fixtures/
+│   └── auth.fixture.ts       ← shared login setup
+└── specs/
+    ├── login.spec.ts         ← test scenarios only — no selectors here
+    └── checkout.spec.ts
+```
+
+**LoginPage.ts — full POM class:**
+```typescript
+import { Page, Locator, expect } from '@playwright/test';
+
+export class LoginPage {
+  // Locators — defined once, used everywhere
+  private readonly emailInput: Locator;
+  private readonly passwordInput: Locator;
+  private readonly submitButton: Locator;
+  private readonly errorMessage: Locator;
+  private readonly forgotPasswordLink: Locator;
+
+  constructor(private page: Page) {
+    // Always prefer data-testid — most stable selector
+    this.emailInput       = page.getByTestId('email-input');
+    this.passwordInput    = page.getByTestId('password-input');
+    this.submitButton     = page.getByTestId('submit-btn');
+    this.errorMessage     = page.getByTestId('error-message');
+    this.forgotPasswordLink = page.getByText('Forgot password?');
+  }
+
+  // Navigation
+  async goto() {
+    await this.page.goto('/login');
+    await this.page.waitForLoadState('networkidle');
+  }
+
+  // Actions — high-level steps, not clicks
+  async login(email: string, password: string) {
+    await this.emailInput.fill(email);
+    await this.passwordInput.fill(password);
+    await this.submitButton.click();
+    await this.page.waitForURL('**/dashboard');  // wait for redirect
+  }
+
+  async attemptLogin(email: string, password: string) {
+    // Same as login but does NOT assert redirect — for error cases
+    await this.emailInput.fill(email);
+    await this.passwordInput.fill(password);
+    await this.submitButton.click();
+  }
+
+  // Assertions — encapsulated in the page object
+  async expectErrorMessage(message: string) {
+    await expect(this.errorMessage).toBeVisible();
+    await expect(this.errorMessage).toContainText(message);
+  }
+
+  async expectLoginFormVisible() {
+    await expect(this.emailInput).toBeVisible();
+    await expect(this.passwordInput).toBeVisible();
+    await expect(this.submitButton).toBeEnabled();
+  }
+}
+```
+
+**login.spec.ts — clean test file using POM:**
+```typescript
+import { test, expect } from '@playwright/test';
+import { LoginPage } from '../pages/LoginPage';
+import { DashboardPage } from '../pages/DashboardPage';
+
+test.describe('Login flow', () => {
+  let loginPage: LoginPage;
+  let dashboardPage: DashboardPage;
+
+  test.beforeEach(async ({ page }) => {
+    loginPage = new LoginPage(page);
+    dashboardPage = new DashboardPage(page);
+    await loginPage.goto();
+  });
+
+  test('TC-AUTH-E2E-FN-001 — valid credentials redirect to dashboard', async () => {
+    await loginPage.login('alice@example.com', 'Password123!');
+    await dashboardPage.expectWelcomeMessage('Alice');
+  });
+
+  test('TC-AUTH-E2E-FN-002 — wrong password shows error', async () => {
+    await loginPage.attemptLogin('alice@example.com', 'wrong_password');
+    await loginPage.expectErrorMessage('Invalid email or password');
+  });
+
+  test('TC-AUTH-E2E-FN-003 — empty email shows validation', async () => {
+    await loginPage.attemptLogin('', 'Password123!');
+    await loginPage.expectErrorMessage('Email is required');
+  });
+
+  test('TC-AUTH-E2E-FN-004 — SQL injection in email field is safe', async () => {
+    await loginPage.attemptLogin("admin' OR '1'='1", 'any');
+    await loginPage.expectErrorMessage('Invalid email or password');
+    // Must not bypass auth
+  });
+});
+```
+
+---
+
+### Pattern 2: Shared Auth Fixture (Login Once, Reuse Everywhere)
+
+The biggest E2E performance mistake: logging in inside every test. Use Playwright fixtures to login ONCE per test suite and reuse the session.
+
+**auth.fixture.ts:**
+```typescript
+import { test as base, BrowserContext } from '@playwright/test';
+import { LoginPage } from '../pages/LoginPage';
+import path from 'path';
+
+// State file — saved login session
+const USER_STATE = path.join(__dirname, '../.auth/user.json');
+const ADMIN_STATE = path.join(__dirname, '../.auth/admin.json');
+
+// Setup project — run ONCE before all tests
+// playwright.config.ts:
+//   project: { name: 'setup', testMatch: /global-setup/ }
+export async function globalSetup() {
+  const { chromium } = require('@playwright/test');
+  const browser = await chromium.launch();
+  const page = await browser.newPage();
+  const loginPage = new LoginPage(page);
+  
+  // Save regular user session
+  await loginPage.goto();
+  await loginPage.login('user@example.com', 'password123');
+  await page.context().storageState({ path: USER_STATE });
+  
+  // Save admin session
+  await loginPage.goto();
+  await loginPage.login('admin@example.com', 'adminpass');
+  await page.context().storageState({ path: ADMIN_STATE });
+  
+  await browser.close();
+}
+
+// Extend test with authenticated contexts
+type AuthFixtures = {
+  userContext: BrowserContext;
+  adminContext: BrowserContext;
+};
+
+export const test = base.extend<AuthFixtures>({
+  userContext: async ({ browser }, use) => {
+    const context = await browser.newContext({ storageState: USER_STATE });
+    await use(context);
+    await context.close();
+  },
+  adminContext: async ({ browser }, use) => {
+    const context = await browser.newContext({ storageState: ADMIN_STATE });
+    await use(context);
+    await context.close();
+  },
+});
+```
+
+**Using the fixture:**
+```typescript
+import { test } from '../fixtures/auth.fixture';
+import { expect } from '@playwright/test';
+
+// No login needed — session is already stored
+test('user can view own orders', async ({ userContext }) => {
+  const page = await userContext.newPage();
+  await page.goto('/orders');
+  await expect(page.getByTestId('orders-list')).toBeVisible();
+});
+
+test('admin can access user management', async ({ adminContext }) => {
+  const page = await adminContext.newPage();
+  await page.goto('/admin/users');
+  await expect(page.getByTestId('users-table')).toBeVisible();
+});
+
+test('user cannot access admin panel', async ({ userContext }) => {
+  const page = await userContext.newPage();
+  await page.goto('/admin/users');
+  await expect(page).toHaveURL('/403');  // redirect to forbidden
+});
+```
+
+---
+
+### Pattern 3: Visual Regression Testing
+
+Visual regression testing captures screenshots and compares them pixel by pixel. It catches CSS regressions that functional tests miss.
+
+**Basic visual regression with Playwright:**
+```typescript
+import { test, expect } from '@playwright/test';
+
+test('TC-UI-VRT-001 — login page visual snapshot', async ({ page }) => {
+  await page.goto('/login');
+  await page.waitForLoadState('networkidle');
+  
+  // IMPORTANT: Mask dynamic content before screenshot
+  await page.evaluate(() => {
+    // Hide timestamps and dynamic dates
+    document.querySelectorAll('[data-dynamic]').forEach(el => {
+      (el as HTMLElement).style.visibility = 'hidden';
+    });
+  });
+  
+  // Capture and compare against stored baseline
+  await expect(page).toHaveScreenshot('login-page.png', {
+    maxDiffPixels: 50,         // allow up to 50 pixels difference
+    threshold: 0.1,            // 10% color threshold per pixel
+    animations: 'disabled',   // freeze animations
+  });
+});
+
+test('TC-UI-VRT-002 — button states visual check', async ({ page }) => {
+  await page.goto('/components/buttons');
+  
+  // Test specific component, not whole page — more stable
+  const buttonGroup = page.getByTestId('button-group');
+  await expect(buttonGroup).toHaveScreenshot('buttons-default.png');
+  
+  // Hover state
+  await page.hover('[data-testid="primary-button"]');
+  await expect(buttonGroup).toHaveScreenshot('buttons-hover.png');
+});
+
+// Multi-viewport visual test
+for (const viewport of [
+  { name: 'mobile', width: 375, height: 812 },
+  { name: 'tablet', width: 768, height: 1024 },
+  { name: 'desktop', width: 1440, height: 900 },
+]) {
+  test(`TC-UI-VRT-003 — homepage responsive at ${viewport.name}`, async ({ page }) => {
+    await page.setViewportSize({ width: viewport.width, height: viewport.height });
+    await page.goto('/');
+    await expect(page).toHaveScreenshot(`homepage-${viewport.name}.png`);
+  });
+}
+```
+
+**Handling common false positives:**
+```typescript
+// Problem 1: Timestamps change on every render
+await expect(page).toHaveScreenshot('dashboard.png', {
+  mask: [page.getByTestId('last-updated-time')],  // mask the timestamp
+});
+
+// Problem 2: Animations not complete yet
+await page.waitForFunction(() => {
+  const el = document.querySelector('.loading-spinner');
+  return !el || window.getComputedStyle(el).display === 'none';
+});
+
+// Problem 3: Fonts render differently on CI vs local
+// Solution: set in playwright.config.ts
+// use: { ignoreHTTPSErrors: true, locale: 'en-US' }
+
+// Problem 4: Dynamic images or ads
+await page.route('**/*.jpg', route => route.fulfill({
+  path: 'tests/fixtures/placeholder.jpg'  // replace dynamic images with placeholder
+}));
+```
+
+**Update baseline snapshots:**
+```bash
+# When UI change is intentional, update the baseline
+npx playwright test --update-snapshots
+
+# Run visual tests only
+npx playwright test --grep "VRT"
+```
+
+---
+
+### Pattern 4: Anti-Flakiness Patterns
+
+Flaky tests are E2E's biggest problem. They pass sometimes and fail sometimes for no clear reason. Here are the patterns that fix them.
+
+**Root causes and fixes:**
+
+**Cause 1: Hard-coded waits (most common)**
+```typescript
+// BAD — will fail if page loads slowly
+await page.waitForTimeout(3000);  // NEVER do this
+await page.click('#submit');
+
+// GOOD — wait for the actual condition
+await page.waitForSelector('#submit', { state: 'visible' });
+await page.click('#submit');
+
+// BETTER — Playwright auto-wait (built-in, use this by default)
+await page.getByTestId('submit-btn').click();  // auto-waits for visibility
+await expect(page.getByTestId('success-message')).toBeVisible({ timeout: 10000 });
+```
+
+**Cause 2: Test data pollution (tests share state)**
+```typescript
+// BAD — tests share same user, state bleeds between tests
+test.beforeAll(async () => {
+  testUser = await createUser('shared@test.com');
+});
+
+// GOOD — each test creates and cleans up its own data
+test.beforeEach(async () => {
+  testUser = await createUser(`test-${Date.now()}@example.com`);
+});
+test.afterEach(async () => {
+  await deleteUser(testUser.id);
+});
+```
+
+**Cause 3: Race conditions in async operations**
+```typescript
+// BAD — click and immediately check — response may not have arrived
+await page.click('[data-testid="save-btn"]');
+await expect(page.getByTestId('success-toast')).toBeVisible();
+
+// GOOD — wait for the network request to complete
+await Promise.all([
+  page.waitForResponse(response =>
+    response.url().includes('/api/save') && response.status() === 200
+  ),
+  page.click('[data-testid="save-btn"]'),
+]);
+await expect(page.getByTestId('success-toast')).toBeVisible();
+```
+
+**Cause 4: Fragile selectors**
+```typescript
+// BAD — breaks when CSS class changes
+await page.click('.btn-primary.submit-form');
+await page.click('//div[@class="container"]/button[2]');
+
+// GOOD — data-testid is stable, developers control it
+await page.click('[data-testid="checkout-submit"]');
+await page.getByRole('button', { name: 'Place Order' }).click();  // also stable
+```
+
+**Cause 5: Environment-dependent failures**
+```typescript
+// BAD — depends on specific timezone, locale, or screen size
+expect(displayDate).toBe('03/25/2026');  // fails in different locales
+
+// GOOD — use relative assertions
+expect(displayDate).toMatch(/\d{2}\/\d{2}\/\d{4}/);  // any date format
+
+// For consistent rendering: set in playwright.config.ts
+use: {
+  locale: 'en-US',
+  timezoneId: 'America/New_York',
+  viewport: { width: 1280, height: 720 },
+}
+```
+
+**Flakiness detection and quarantine:**
+```bash
+# Detect flaky tests — run each test 10 times
+npx playwright test --repeat-each=10 login.spec.ts
+
+# In CI — retry failed tests automatically (but don't hide flakiness)
+# playwright.config.ts
+retries: process.env.CI ? 2 : 0,  # retry on CI, never locally
+
+# Quarantine: mark known flaky test until fixed
+test.skip('TC-FLAKY-001 — flaky until #1234 is fixed', async ({ page }) => { ... });
 ```
 
 ---

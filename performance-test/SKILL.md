@@ -9,7 +9,7 @@ description: >
   "latency", "RPS", "concurrent users", "response time", "SLA", "p95", "p99".
 metadata:
   author: qa-skill-builder
-  version: '3.0'
+  version: '4.0'
 ---
 
 # Performance Test Skill
@@ -496,6 +496,340 @@ locust -f locustfile.py --headless -u 100 -r 10 --host=https://api.example.com -
 
 # JMeter — CLI (non-GUI)
 jmeter -n -t test-plan.jmx -l results.jtl -e -o html-report/
+```
+
+---
+
+## Advanced Testing Patterns
+
+### Pattern 1: Load Profile Selection Guide
+
+The hardest part of performance testing is choosing the RIGHT test type. Here is a decision guide based on what you need to know.
+
+**Test Type Selector:**
+```
+Question: What do I need to know?
+├── "Does the system work at normal load?"      → Average Load Test
+├── "What is the maximum load before it breaks?" → Stress Test
+├── "Does it break if traffic spikes suddenly?"  → Spike Test
+├── "Does it degrade slowly over hours/days?"    → Soak / Endurance Test
+├── "Is it fast enough for a quick sanity check?" → Smoke Perf Test
+└── "How does it scale when I add servers?"      → Scalability Test
+```
+
+**Load profile shapes (k6):**
+
+```javascript
+// AVERAGE LOAD — ramp to normal, hold, ramp down
+export let options = {
+  stages: [
+    { duration: '5m',  target: 100 },   // ramp up to 100 users
+    { duration: '30m', target: 100 },   // hold at 100 (normal traffic)
+    { duration: '5m',  target: 0   },   // ramp down
+  ],
+  thresholds: {
+    http_req_duration: ['p95<500'],     // 95% of requests under 500ms
+    http_req_failed:   ['rate<0.01'],   // less than 1% errors
+  },
+};
+
+// STRESS TEST — push beyond normal, find breaking point
+export let options = {
+  stages: [
+    { duration: '5m',  target: 100 },
+    { duration: '10m', target: 200 },
+    { duration: '10m', target: 300 },
+    { duration: '10m', target: 400 },   // keep increasing
+    { duration: '5m',  target: 0   },
+  ],
+  // No strict thresholds — we WANT to find where it breaks
+};
+
+// SPIKE TEST — sudden burst of traffic
+export let options = {
+  stages: [
+    { duration: '2m',  target: 50  },   // normal baseline
+    { duration: '30s', target: 500 },   // SPIKE — sudden 10x traffic
+    { duration: '3m',  target: 500 },   // hold spike
+    { duration: '30s', target: 50  },   // back to normal
+    { duration: '3m',  target: 50  },   // verify recovery
+    { duration: '1m',  target: 0   },
+  ],
+};
+
+// SOAK / ENDURANCE — run for hours
+export let options = {
+  stages: [
+    { duration: '10m', target: 100 },  // ramp up
+    { duration: '4h',  target: 100 },  // hold for 4 hours — check for memory leaks, connection exhaustion
+    { duration: '10m', target: 0   },  // ramp down
+  ],
+  thresholds: {
+    http_req_duration: ['p95<500'],
+    http_req_failed:   ['rate<0.01'],
+  },
+};
+
+// SMOKE PERF — quick sanity check (is anything obviously broken?)
+export let options = {
+  vus: 1,
+  duration: '1m',
+  thresholds: {
+    http_req_duration: ['p95<1000'],   // just check it's not 10 seconds
+    http_req_failed:   ['rate<0.05'],
+  },
+};
+```
+
+---
+
+### Pattern 2: SLO / SLI / SLA Definition & Measurement
+
+SLO (Service Level Objective), SLI (Service Level Indicator), and SLA (Service Level Agreement) are the industry standard way to define and measure performance. Every performance test must target these.
+
+**Definitions:**
+```
+SLI = What you measure          (e.g., response time, error rate, availability)
+SLO = Target you set internally (e.g., p99 < 500ms, error rate < 0.1%)
+SLA = Commitment to customer    (e.g., 99.9% uptime, or we pay penalty)
+
+SLO is stricter than SLA — you set a tighter internal target so SLA is easy to meet.
+```
+
+**SLO definition template (for k6 thresholds):**
+```javascript
+// Define SLOs in k6 thresholds
+export let options = {
+  thresholds: {
+    // Response time SLOs — by percentile
+    'http_req_duration':                    ['p50<100', 'p95<300', 'p99<800'],
+    'http_req_duration{name:login}':        ['p95<500'],   // per-endpoint SLO
+    'http_req_duration{name:checkout}':     ['p95<1000'],
+    'http_req_duration{name:search}':       ['p95<200'],
+    
+    // Availability SLO
+    'http_req_failed':                      ['rate<0.001'],  // < 0.1% errors
+    
+    // Throughput SLO
+    'http_reqs':                            ['rate>100'],    // > 100 req/sec minimum
+    
+    // Custom business metric SLO
+    'order_placed':                         ['count>50'],    // > 50 orders placed in test
+  },
+};
+
+// Tag requests by name for per-endpoint SLOs
+http.get(BASE_URL + '/api/products', { tags: { name: 'search' } });
+http.post(BASE_URL + '/api/orders', payload, { tags: { name: 'checkout' } });
+```
+
+**SLO tracking across releases:**
+```markdown
+## Performance SLO Dashboard
+
+| Endpoint | SLO | Baseline (v1.0) | Current (v1.1) | Status |
+|---|---|---|---|---|
+| GET /api/products | p95 < 200ms | 145ms | 162ms | ✅ PASS |
+| POST /api/orders | p95 < 1000ms | 780ms | 1100ms | ❌ FAIL — regression! |
+| GET /api/user | p95 < 300ms | 89ms | 91ms | ✅ PASS |
+| Error rate | < 0.1% | 0.03% | 0.02% | ✅ PASS |
+
+Regression detected: POST /api/orders degraded by 41% — investigate before release.
+```
+
+**Error budget concept:**
+```
+SLO: 99.9% availability (allows 8.7 hours downtime per year)
+Error budget: 100% - 99.9% = 0.1% (that's the budget to spend)
+
+If you deploy 10 times per month and each deploy causes 0.01% errors:
+  Monthly budget used = 10 × 0.01% = 0.1% ← almost at limit
+  → Slow down deployments or improve reliability before next deploy
+```
+
+---
+
+### Pattern 3: Authenticated + Multi-Step Flow Test
+
+Most real load tests require authentication. Here is the correct pattern for login-then-use flows.
+
+**k6 — full authenticated workflow:**
+```javascript
+import http from 'k6/http';
+import { check, group, sleep } from 'k6';
+import { SharedArray } from 'k6/data';
+import { Counter, Trend } from 'k6/metrics';
+
+// Custom metrics for business events
+const ordersPlaced = new Counter('orders_placed');
+const checkoutDuration = new Trend('checkout_duration');
+
+// Load test users from data file (not hardcoded)
+const users = new SharedArray('users', function() {
+  return JSON.parse(open('./test-data/users.json'));
+});
+
+export let options = {
+  stages: [
+    { duration: '2m',  target: 50  },
+    { duration: '10m', target: 50  },
+    { duration: '2m',  target: 0   },
+  ],
+  thresholds: {
+    'http_req_duration{name:login}':    ['p95<500'],
+    'http_req_duration{name:checkout}': ['p95<2000'],
+    'http_req_failed':                  ['rate<0.01'],
+    'orders_placed':                    ['count>20'],    // business KPI
+  },
+};
+
+export default function() {
+  // Each VU gets a different user
+  const user = users[__VU % users.length];
+  
+  let token;
+  
+  // Step 1: Login
+  group('Login', () => {
+    const res = http.post(`${BASE_URL}/api/auth/login`, JSON.stringify({
+      email: user.email,
+      password: user.password,
+    }), {
+      headers: { 'Content-Type': 'application/json' },
+      tags: { name: 'login' },
+    });
+    
+    check(res, {
+      'login status 200': (r) => r.status === 200,
+      'login returns token': (r) => r.json('token') !== undefined,
+    });
+    
+    token = res.json('token');
+  });
+  
+  if (!token) return;  // abort if login failed
+  
+  const authHeaders = {
+    'Authorization': `Bearer ${token}`,
+    'Content-Type': 'application/json',
+  };
+  
+  sleep(1);  // real user pauses between actions
+  
+  // Step 2: Browse products
+  group('Browse', () => {
+    const res = http.get(`${BASE_URL}/api/products?category=electronics`, {
+      headers: authHeaders,
+      tags: { name: 'search' },
+    });
+    check(res, { 'products loaded': (r) => r.status === 200 });
+    
+    const products = res.json('data');
+    if (!products || products.length === 0) return;
+    
+    sleep(2);  // user reads the page
+    
+    // Step 3: View product detail
+    const productId = products[0].id;
+    http.get(`${BASE_URL}/api/products/${productId}`, {
+      headers: authHeaders,
+      tags: { name: 'product-detail' },
+    });
+  });
+  
+  sleep(1);
+  
+  // Step 4: Checkout — most business-critical flow
+  group('Checkout', () => {
+    const startTime = Date.now();
+    
+    const res = http.post(`${BASE_URL}/api/orders`, JSON.stringify({
+      product_id: 1,
+      quantity: 1,
+      payment_method: 'card',
+    }), {
+      headers: authHeaders,
+      tags: { name: 'checkout' },
+    });
+    
+    checkoutDuration.add(Date.now() - startTime);
+    
+    if (check(res, {
+      'order created 201': (r) => r.status === 201,
+      'order has id': (r) => r.json('id') !== undefined,
+    })) {
+      ordersPlaced.add(1);  // track successful business events
+    }
+  });
+  
+  sleep(Math.random() * 3 + 1);  // random think time 1-4 seconds
+}
+```
+
+---
+
+### Pattern 4: Performance Regression Detection
+
+Every CI pipeline should have a performance gate. If response time regresses by more than X%, the build fails.
+
+**k6 — performance gate script:**
+```javascript
+// perf-gate.js — run on every PR
+export let options = {
+  vus: 10,
+  duration: '2m',
+  thresholds: {
+    // These values come from baseline measurement — stored in CI env vars
+    'http_req_duration': [
+      // p95 must not be more than 20% above baseline
+      `p95<${parseInt(__ENV.BASELINE_P95) * 1.20}`,
+    ],
+    'http_req_failed': ['rate<0.01'],
+  },
+};
+```
+
+**CI integration (GitHub Actions):**
+```yaml
+name: Performance Gate
+on: [pull_request]
+
+jobs:
+  perf-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Start app
+        run: docker-compose up -d && sleep 30
+      
+      - name: Run k6 performance gate
+        uses: grafana/k6-action@v0.3.0
+        with:
+          filename: tests/performance/perf-gate.js
+        env:
+          BASELINE_P95: ${{ vars.PERF_BASELINE_P95_MS }}  # stored in repo variables
+          BASE_URL: http://localhost:3000
+      
+      - name: Upload k6 report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: k6-report
+          path: k6-report.html
+```
+
+**Reading k6 results — what to look for:**
+```
+Output field          | What it means                    | Red flag if...
+----------------------|----------------------------------|---------------------------
+http_req_duration p50 | Median response time             | > 2x your baseline
+http_req_duration p95 | 95th percentile (SLO target)     | Exceeds your SLO
+http_req_duration p99 | Worst 1% of requests             | > 5x p50 (huge tail latency)
+http_req_failed rate  | % of requests that got error     | > 1% for most systems
+http_reqs rate        | Throughput (requests per second) | Lower than expected for VU count
+vus_max              | Peak concurrent users            | Compare to your test config
+data_received         | Total data received               | Much higher than expected → check response sizes
 ```
 
 ---
