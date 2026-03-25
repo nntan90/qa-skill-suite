@@ -82,6 +82,7 @@ Quick tip: just describe your feature or paste your code — the agent will ask 
 | `qa/test-review` | Advanced + Management | Anti-pattern detection, coverage audit, peer review |
 | `qa/bug-report` | Foundation | Defect reporting, severity/priority, Jira/GitHub/Linear |
 | `qa/test-plan` | Advanced Management | Test strategy, plan, risk analysis, metrics, ISTQB docs |
+| `qa/automation-framework` | CTAL-TAE v2.0 + CT-TAS v1.0 | Automation architecture, framework design, Test Pyramid/Diamond/Trophy/Honeycomb, POM vs Screenplay, CI/CD pipelines, parallel execution, data management |
 
 ## Routing Logic
 
@@ -95,6 +96,7 @@ Security / OWASP / pen test / vulnerability → qa/security-test
 Review tests / find bad tests / audit       → qa/test-review
 File a bug / defect report                  → qa/bug-report
 Test plan / strategy / metrics / release    → qa/test-plan
+Automation framework / architecture / how to structure tests → qa/automation-framework
 Ambiguous request → infer from context, default to qa/manual-test
 ```
 
