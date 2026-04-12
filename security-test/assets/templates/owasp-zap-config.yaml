@@ -1,0 +1,200 @@
+# OWASP ZAP Configuration Template
+# =================================
+# Configuration file for OWASP ZAP automated security scanning.
+# Customize this file based on your application and testing needs.
+#
+# Usage with ZAP Docker:
+#   docker run -v $(pwd):/zap/wrk/:rw owasp/zap2docker-stable zap-baseline.py \
+#     -t https://target.example.com -c zap-config.yaml -r report.html
+
+env:
+  contexts:
+    - name: "Default Context"
+      urls:
+        - "https://target.example.com"
+      includePaths:
+        - "https://target.example.com/.*"
+      excludePaths:
+        - "https://target.example.com/logout.*"
+        - "https://target.example.com/static/.*"
+        - "https://target.example.com/assets/.*"
+
+  parameters:
+    failOnError: true
+    failOnWarning: false
+    progressToStdout: true
+
+# Authentication configuration
+authentication:
+  method: "formAuthentication"
+  parameters:
+    loginUrl: "https://target.example.com/login"
+    loginPageUrl: "https://target.example.com/login"
+    usernameField: "email"
+    passwordField: "password"
+    loginRequestData: "email={%username%}&password={%password%}"
+  verification:
+    method: "response"
+    loggedInIndicator: "Logout|Dashboard"
+    loggedOutIndicator: "Login|Sign In"
+
+# Session management
+sessionManagement:
+  method: "cookie"
+  parameters:
+    cookieName: "session_id"
+
+# Users for authenticated scanning
+users:
+  - name: "standard-user"
+    credentials:
+      username: "test@example.com"
+      password: "test123"
+  - name: "admin-user"
+    credentials:
+      username: "admin@example.com"
+      password: "admin123"
+
+# Active scan configuration
+activeScan:
+  policy: "Default Policy"
+  maxRuleDurationInMins: 5
+  maxScanDurationInMins: 60
+  threadPerHost: 2
+
+# Passive scan configuration
+passiveScan:
+  enableTags: true
+  maxAlertsPerRule: 10
+  scanOnlyInScope: true
+
+# Rules configuration
+rules:
+  # Disable specific rules by ID
+  disabled:
+    - id: 10096  # Timestamp Disclosure
+    - id: 10055  # CSP Scanner (if you handle CSP separately)
+
+  # Configure specific rules
+  configured:
+    - id: 10020  # X-Frame-Options Header
+      threshold: "LOW"
+      strength: "MEDIUM"
+    
+    - id: 10021  # X-Content-Type-Options Header
+      threshold: "MEDIUM"
+      strength: "MEDIUM"
+    
+    - id: 10035  # Strict-Transport-Security Header
+      threshold: "LOW"
+      strength: "MEDIUM"
+
+# Spider configuration
+spider:
+  maxDuration: 10
+  maxDepth: 5
+  maxChildren: 10
+  acceptCookies: true
+  handleODataParametersVisited: false
+  handleParameters: "USE_ALL"
+  parseComments: true
+  parseGit: true
+  parseRobotsTxt: true
+  parseSVNEntries: true
+  parseSitemapXml: true
+  postForm: true
+  processForm: true
+  requestWaitTime: 200
+
+# AJAX Spider for JavaScript-heavy applications
+ajaxSpider:
+  enabled: true
+  maxDuration: 10
+  maxCrawlDepth: 5
+  maxCrawlStates: 0
+  browserType: "firefox-headless"
+  clickDefaultElems: true
+  clickElemsOnce: true
+  eventWait: 1000
+  reloadWait: 1000
+  numberOfBrowsers: 2
+
+# Alert filters
+alertFilters:
+  # Filter out known false positives
+  - ruleId: 10096
+    newRisk: "INFO"
+    urlPattern: ".*"
+    enabled: true
+    matcherType: "REGEX"
+
+  # Downgrade certain alerts for specific paths
+  - ruleId: 10020
+    newRisk: "LOW"
+    urlPattern: ".*\\.pdf$"
+    enabled: true
+    matcherType: "REGEX"
+
+# Report configuration
+reports:
+  - name: "html-report"
+    type: "traditional-html"
+    fileName: "zap-report.html"
+    displayReport: false
+
+  - name: "json-report"
+    type: "json"
+    fileName: "zap-report.json"
+    displayReport: false
+
+  - name: "sarif-report"
+    type: "sarif"
+    fileName: "zap-report.sarif"
+    displayReport: false
+
+# Jobs (scan workflow)
+jobs:
+  - type: passiveScan-config
+    parameters:
+      maxAlertsPerRule: 10
+      scanOnlyInScope: true
+      maxBodySizeInBytesToScan: 10000
+
+  - type: spider
+    parameters:
+      context: "Default Context"
+      user: "standard-user"
+      maxDuration: 10
+
+  - type: spiderAjax
+    parameters:
+      context: "Default Context"
+      user: "standard-user"
+      maxDuration: 10
+      runOnlyIfModern: true
+
+  - type: passiveScan-wait
+    parameters:
+      maxDuration: 5
+
+  - type: activeScan
+    parameters:
+      context: "Default Context"
+      user: "standard-user"
+      maxRuleDurationInMins: 5
+      maxScanDurationInMins: 60
+
+  - type: report
+    parameters:
+      template: "traditional-html"
+      reportFile: "zap-report.html"
+      reportTitle: "Security Scan Report"
+      reportDescription: "OWASP ZAP automated security scan"
+
+# Severity thresholds for CI/CD integration
+# Return non-zero exit code if alerts exceed these thresholds
+severityThresholds:
+  high: 0      # Fail if any high severity alerts
+  medium: 5    # Fail if more than 5 medium severity alerts
+  low: 20      # Fail if more than 20 low severity alerts
+  info: 100    # Allow up to 100 informational alerts
