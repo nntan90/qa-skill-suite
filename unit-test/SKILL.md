@@ -11,7 +11,7 @@ description: >
   "component test", "SDET", "pytest", "Jest", "JUnit".
 metadata:
   author: qa-skill-suite
-  version: '4.0'
+  version: '4.1'
 ---
 
 # Unit Test Skill

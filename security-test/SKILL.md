@@ -11,7 +11,7 @@ description: >
   "security scan", "threat model", "LLM security", "AI security".
 metadata:
   author: qa-skill-suite
-  version: '4.0'
+  version: '4.1'
 ---
 
 # Security Test Skill

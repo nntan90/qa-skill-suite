@@ -11,7 +11,7 @@ description: >
   "database test", "DB test", "RestAssured", "test service", "integration test API".
 metadata:
   author: qa-skill-suite
-  version: '4.0'
+  version: '4.1'
 ---
 
 # API Test Skill

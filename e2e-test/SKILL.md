@@ -9,7 +9,7 @@ description: >
   "end-to-end", "test the login flow", "automate this journey", "smoke test", "regression test".
 metadata:
   author: qa-skill-builder
-  version: '4.0'
+  version: '4.1'
 ---
 
 # E2E Test Skill
