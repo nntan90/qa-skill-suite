@@ -11,7 +11,7 @@ description: >
   "boundary value", "decision table", "state transition", "exploratory session", "SBET".
 metadata:
   author: qa-skill-suite
-  version: '3.0'
+  version: '4.1'
 ---
 
 # Manual Test Skill

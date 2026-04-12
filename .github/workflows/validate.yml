@@ -1,0 +1,130 @@
+name: Validate QA Skill Suite
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    name: Validate Structure and Content
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install validation tools
+        run: |
+          npm install -g markdownlint-cli
+          npm install -g markdown-link-check
+          npm install -g cspell
+
+      - name: Lint Markdown files
+        run: |
+          markdownlint '**/*.md' --ignore node_modules --ignore .git \
+            --config .markdownlint.json || echo "::warning::Markdown lint issues found"
+
+      - name: Check links in Markdown files
+        run: |
+          find . -name "*.md" -not -path "./node_modules/*" -not -path "./.git/*" \
+            -exec markdown-link-check {} --config .markdown-link-check.json \; || echo "::warning::Some links may be broken"
+
+      - name: Spell check
+        run: |
+          cspell "**/*.md" --no-progress --config .cspell.json || echo "::warning::Spelling issues found"
+
+      - name: Validate skill structure
+        run: |
+          echo "Validating skill folder structure..."
+          
+          SKILLS=("manual-test" "unit-test" "api-test" "e2e-test" "performance-test" "security-test" "test-review" "bug-report" "test-plan" "automation-framework" "accessibility-test" "mobile-test")
+          
+          for skill in "${SKILLS[@]}"; do
+            if [ -d "$skill" ]; then
+              echo "Checking $skill..."
+              
+              # Check for SKILL.md
+              if [ ! -f "$skill/SKILL.md" ]; then
+                echo "::error::Missing SKILL.md in $skill"
+                exit 1
+              fi
+              
+              # Check for assets/templates
+              if [ ! -d "$skill/assets/templates" ]; then
+                echo "::warning::Missing assets/templates in $skill"
+              fi
+              
+              # Check for references
+              if [ ! -d "$skill/references" ]; then
+                echo "::warning::Missing references in $skill"
+              fi
+              
+              echo "✓ $skill structure validated"
+            fi
+          done
+          
+          echo "All skill structures validated successfully!"
+
+      - name: Check version consistency
+        run: |
+          echo "Checking version consistency across SKILL.md files..."
+          
+          # Extract versions from all SKILL.md files
+          versions=$(grep -h "version:" */SKILL.md SKILL.md 2>/dev/null | sort -u)
+          version_count=$(echo "$versions" | wc -l)
+          
+          if [ "$version_count" -gt 1 ]; then
+            echo "::warning::Multiple versions found across SKILL.md files:"
+            echo "$versions"
+          else
+            echo "✓ Version consistency check passed"
+          fi
+
+  security:
+    runs-on: ubuntu-latest
+    name: Security Scan
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check for secrets
+        run: |
+          echo "Scanning for potential secrets..."
+          
+          # Simple pattern matching for common secret patterns
+          if grep -rE "(password|secret|api_key|apikey|token)\\s*[:=]\\s*['\"][^'\"]+['\"]" \
+            --include="*.md" --include="*.yml" --include="*.yaml" \
+            --exclude-dir=.git . 2>/dev/null; then
+            echo "::warning::Potential secrets found in files"
+          else
+            echo "✓ No obvious secrets detected"
+          fi
+
+      - name: Validate YAML files
+        run: |
+          echo "Validating YAML files..."
+          
+          for file in $(find . -name "*.yml" -o -name "*.yaml" | grep -v node_modules | grep -v .git); do
+            echo "Checking $file..."
+            python3 -c "import yaml; yaml.safe_load(open('$file'))" || {
+              echo "::error::Invalid YAML in $file"
+              exit 1
+            }
+          done
+          
+          echo "✓ All YAML files are valid"

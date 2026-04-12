@@ -12,7 +12,7 @@ description: >
   estimation", "risk-based testing", "QA roadmap", "master test plan".
 metadata:
   author: qa-skill-suite
-  version: '3.0'
+  version: '4.1'
 ---
 
 # Test Plan Skill

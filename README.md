@@ -1,5 +1,10 @@
 # QA Skill Suite — ISTQB Aligned
 
+[![Version](https://img.shields.io/badge/version-4.1-blue.svg)](./CHANGELOG.md)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
+[![ISTQB](https://img.shields.io/badge/ISTQB-Aligned-orange.svg)](./docs/istqb-mapping.md)
+[![Validation](https://github.com/nntan90/qa-skill-suite/actions/workflows/validate.yml/badge.svg)](https://github.com/nntan90/qa-skill-suite/actions/workflows/validate.yml)
+
 > A comprehensive set of Agent Skills for Software Testers and SDETs.  
 > Aligned with **ISTQB Foundation · Advanced Test Analyst · Advanced Test Manager · ISO 29119**.  
 > Works with Claude Code, GitHub Copilot, Cursor, Gemini CLI, and any [agentskills.io](https://agentskills.io) compatible tool.
@@ -20,6 +25,9 @@
 | [`qa/test-review`](./test-review/SKILL.md) | Quality Audit | 10 anti-patterns, mutation testing, completion gate, coverage audit |
 | [`qa/bug-report`](./bug-report/SKILL.md) | Defect Management | Severity matrix, Jira/GitHub/Linear templates |
 | [`qa/test-plan`](./test-plan/SKILL.md) | Advanced Management | IEEE 829 / ISO 29119 test plan, PERT estimation, metrics, daily report |
+| [`qa/automation-framework`](./automation-framework/SKILL.md) | Test Architecture | Test Pyramid, framework selection, CI/CD integration |
+| [`qa/accessibility-test`](./accessibility-test/SKILL.md) | WCAG Compliance | WCAG 2.1 Level AA, screen reader, keyboard navigation, axe-core |
+| [`qa/mobile-test`](./mobile-test/SKILL.md) | Mobile Testing | Appium, iOS/Android, touch gestures, device compatibility |
 
 ---
 
@@ -60,6 +68,25 @@ The agent automatically selects the right sub-skill based on your request:
 | "Review my tests for anti-patterns" | `qa/test-review` |
 | "File a bug for this issue" | `qa/bug-report` |
 | "Create a test plan for this sprint" | `qa/test-plan` |
+| "Design automation framework" | `qa/automation-framework` |
+| "Test for WCAG compliance" | `qa/accessibility-test` |
+| "Write Appium tests for mobile app" | `qa/mobile-test` |
+
+---
+
+## Verify Installation
+
+After installing, verify the skills are working:
+
+```bash
+# Ask your AI assistant
+"Load qa skill and list available sub-skills"
+
+# Or test a specific skill
+"Use qa/unit-test to write tests for a function that adds two numbers"
+```
+
+**Expected output:** The agent should respond with test cases in the TC-ID format or code using your specified framework.
 
 ---
 
@@ -147,6 +174,47 @@ qa/
         ├── release-checklist.md
         └── daily-report.md
 ```
+
+---
+
+## Troubleshooting
+
+### Skill Not Loading
+
+**Problem:** Agent doesn't recognize the skill or says it can't find it.
+
+**Solutions:**
+1. Verify the skill folder is in the correct location for your tool
+2. Check that SKILL.md exists in the skill folder
+3. Restart your AI assistant after installing
+
+### Wrong Skill Loaded
+
+**Problem:** Agent loads a different skill than expected.
+
+**Solutions:**
+1. Be more specific in your request (e.g., "Use qa/api-test skill to...")
+2. Explicitly mention the skill name
+3. Check the routing logic in the root SKILL.md
+
+### Output Not Complete
+
+**Problem:** Agent's output is missing sections.
+
+**Solutions:**
+1. Remind the agent to follow the Output Contract
+2. Ask "Please complete all sections from the skill's Output Contract"
+3. Check if you provided all required inputs
+
+---
+
+## Documentation
+
+- [Architecture Overview](./docs/architecture.md)
+- [Skill Selection Guide](./docs/skill-selection-guide.md)
+- [ISTQB Mapping](./docs/istqb-mapping.md)
+- [Contributing Guidelines](./CONTRIBUTING.md)
+- [Changelog](./CHANGELOG.md)
 
 ---
 

@@ -13,7 +13,7 @@ description: >
   "check my test suite", "is this test correct?", "test smell".
 metadata:
   author: qa-skill-suite
-  version: '3.0'
+  version: '4.1'
 ---
 
 # Test Review Skill
@@ -63,35 +63,35 @@ If INCOMPLETE — what I still need to add: [list]
 
 ---
 ## Input Schema
-**Trước khi review, agent PHẢI thu thập đủ thông tin sau. Nếu user paste code trực tiếp, hãy tự phân tích language/framework từ code và bắt đầu review ngay.**
+**Before reviewing, the agent MUST collect the following information. If the user pastes code directly, auto-detect the language/framework from the code and start the review immediately.**
 
 ```yaml
 INPUT REQUIRED:
   # --- Mandatory ---
   test_code:
-    description: "Test code cần review"
-    format: "Paste toàn bộ test file(s), hoặc GitHub URL của file"
-    note: "Có thể paste nhiều files — review tổng thể suite"
+    description: "Test code to review"
+    format: "Paste entire test file(s), or provide a GitHub URL"
+    note: "Can paste multiple files for a full suite review"
 
   language:
-    description: "Ngôn ngữ lập trình"
+    description: "Programming language"
     options: ["python", "javascript", "typescript", "java", "go", "ruby", "csharp"]
-    note: "Tự phân tích từ code nếu không được cung cấp"
+    note: "Auto-detect from code if not provided"
 
   framework:
-    description: "Testing framework sử dụng"
+    description: "Testing framework used"
     options: ["pytest", "jest", "vitest", "mocha", "playwright", "cypress", "junit", "rspec"]
-    note: "Tự phân tích từ imports nếu không được cung cấp"
+    note: "Auto-detect from imports if not provided"
 
   # --- Strongly Recommended ---
   codebase_context:
-    description: "Mô tả ngắn về feature/module đang được test"
-    example: "Module xác thực user, bao gồm login, register, password reset. Dùng JWT."
-    note: "Giúp phát hiện missing test cases phù hợp với context"
+    description: "Brief description of the feature/module being tested"
+    example: "User authentication module including login, register, password reset. Uses JWT."
+    note: "Helps detect missing test cases relevant to the context"
 
   # --- Optional ---
   review_focus:
-    description: "Những gì cần ưu tiên review"
+    description: "What to prioritize in the review"
     options:
       - "anti-patterns only"
       - "missing test cases only"
@@ -101,16 +101,16 @@ INPUT REQUIRED:
     default: "full review"
 
   coverage_report:
-    description: "Kết quả coverage từ tool (nếu có)"
-    example: "Paste output của pytest-cov hoặc jest --coverage"
-    note: "Giúp phân biệt coverage thực vs coverage gaming"
+    description: "Coverage results from a tool (if available)"
+    example: "Paste output from pytest-cov or jest --coverage"
+    note: "Helps distinguish real coverage from coverage gaming"
 
   pr_context:
-    description: "Link PR hoặc user story đang được implement"
-    note: "Dùng để kiểm tra acceptance criteria có được cover không"
+    description: "Link to PR or user story being implemented"
+    note: "Used to verify acceptance criteria are covered"
 ```
 
-> Nếu user paste code và nói "review tests", hãy tự detect language/framework và bắt đầu full review ngay. KHÔNG cần hỏi thêm trừ khi test code quá ngắn để hiểu context.
+> If user pastes code and says "review tests", auto-detect language/framework and start a full review immediately. Do NOT ask for more information unless the test code is too short to understand context.
 
 ---
 ## Output Contract
@@ -120,10 +120,10 @@ INPUT REQUIRED:
 
 
 ### Section 1 — Anti-Pattern Scan Results
-Kiểm tra toàn bộ 10 anti-patterns (AP-01 đến AP-10). Với mỗi anti-pattern:
+Scan all 10 anti-patterns (AP-01 to AP-10). For each anti-pattern:
 ```
 AP-01 The Liar:           [FOUND / NOT FOUND]
-  Location: [file:line nếu found]
+  Location: [file:line if found]
   Instance: [code snippet]
 
 AP-02 The Tautology:      [FOUND / NOT FOUND]
@@ -134,11 +134,11 @@ AP-06 The Sleeper:        [FOUND / NOT FOUND]
 AP-07 The Narcissist:     [FOUND / NOT FOUND]
 AP-08 The Pollution:      [FOUND / NOT FOUND]
 AP-09 The Coward:         [FOUND / NOT FOUND]
-AP-10 Brittle Selector:   [FOUND / NOT FOUND (N/A nếu không phải E2E)]
+AP-10 Brittle Selector:   [FOUND / NOT FOUND (N/A if not E2E)]
 ```
 
 ### Section 2 — Coverage Quality Score
-Không chỉ dựa vào % code coverage — đánh giá coverage thực:
+Do not rely only on % code coverage — assess real coverage:
 ```
 Coverage Quality Assessment
 ===========================
@@ -152,7 +152,7 @@ Overall Coverage Quality: 🟢 Good / 🟡 Needs Work / 🔴 Poor
 ```
 
 ### Section 3 — Findings Table
-Bảng tổng hợp tất cả vấn đề phát hiện:
+Summary table of all detected issues:
 | ID | Anti-Pattern | Location | Severity | Current Code | Fix Recommendation |
 |---|---|---|---|---|---|
 | F-001 | AP-01 Liar | auth.test.ts:45 | High | `test('login works', () => { login() })` | Add assertions on return value and side effects |

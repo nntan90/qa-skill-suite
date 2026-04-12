@@ -9,7 +9,7 @@ description: >
   "latency", "RPS", "concurrent users", "response time", "SLA", "p95", "p99".
 metadata:
   author: qa-skill-builder
-  version: '4.0'
+  version: '4.1'
 ---
 
 # Performance Test Skill
